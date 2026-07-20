@@ -1,0 +1,45 @@
+name: Stable Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, macos-latest, ubuntu-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build
+        run: ./gradlew build --no-daemon
+
+      - name: Package release artifact
+        run: echo "TODO: jpackage/jlink platform-specific packaging step, versioned from the git tag"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamjemu-${{ github.ref_name }}-${{ matrix.os }}
+          path: |
+            app-javafx/build/libs/*.jar
+          if-no-files-found: ignore
+
+  publish-release:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note
+        run: |
+          echo "TODO: collect per-OS artifacts and publish a GitHub Release for tag ${{ github.ref_name }}" \
+               "marked as a Stable build (prerelease: false)."

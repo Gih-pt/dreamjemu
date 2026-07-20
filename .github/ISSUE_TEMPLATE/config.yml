@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/OWNER/dreamjemu/blob/main/CONTRIBUTING.md
+    about: Read this before opening an issue or pull request.
+  - name: Project status & roadmap
+    url: https://github.com/OWNER/dreamjemu/blob/main/docs/STATUS.md
+    about: Check what's already done and what's planned next.

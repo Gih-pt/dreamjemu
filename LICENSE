@@ -1,0 +1,29 @@
+DreamJEmu is licensed under the GNU General Public License v3.0 (GPL-3.0-or-later).
+
+Copyright (C) 2026 the DreamJEmu contributors.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+------------------------------------------------------------------------------
+NOTE FOR MAINTAINERS
+
+To avoid any risk of an inaccurate manual transcription of a legal document,
+replace this file's body with the official, verbatim GPL-3.0 license text
+before the first public release. The canonical source is:
+
+    https://www.gnu.org/licenses/gpl-3.0.txt
+
+GitHub can also generate this automatically when you create the repository
+by selecting "GNU General Public License v3.0" as the license template.
+------------------------------------------------------------------------------

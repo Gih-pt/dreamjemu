@@ -1,0 +1,47 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC, only meaningful once main has commits worth building
+  workflow_dispatch: {}
+
+jobs:
+  nightly:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, macos-latest, ubuntu-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build
+        run: ./gradlew build --no-daemon
+
+      - name: Package nightly artifact
+        run: echo "TODO: jpackage/jlink platform-specific packaging step"
+
+      - name: Publish nightly artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreamjemu-nightly-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            app-javafx/build/libs/*.jar
+          if-no-files-found: ignore
+
+  publish-release:
+    needs: nightly
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note
+        run: |
+          echo "TODO: collect per-OS artifacts and publish/update a 'nightly' GitHub Release" \
+               "(e.g. using softprops/action-gh-release with tag_name: nightly, prerelease: true)."
