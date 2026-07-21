@@ -14,8 +14,6 @@ public enum DiscImageFormat {
     CUE_BIN,
     UNKNOWN;
 
-    /**
-     * Detects the format from a file's name/extension and/or header bytes.
-     * Not yet implemented — see DiscImageDetector.
-     */
+    // Detection lives in DiscImageDetector, not here, so this enum stays a
+    // plain value type with no I/O dependencies.
 }

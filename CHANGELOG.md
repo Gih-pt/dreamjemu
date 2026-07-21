@@ -4,6 +4,16 @@ All notable changes to this project should be documented here. Format loosely fo
 
 ## [Unreleased]
 
-### Added
+### Added — 2026-07-21
+- `core-gdrom`: implemented `DiscImageDetector`, identifying GDI, CDI, CHD, and CUE/BIN Dreamcast disc image formats via file extension plus structural content verification (magic bytes / text structure), with content-based fallback when the extension is missing or wrong. 8 JUnit tests added, covering all four formats, a mismatched-extension case, garbage content, an unrelated file, and a non-existent file. Does not require or read any original console/BIOS file.
+- *AI assistance: yes — implemented with Claude (Anthropic), reviewed and tested locally by the project owner (`./gradlew :core-gdrom:test`, all tests passing).*
+
+### Added — 2026-07-20
+- `core-system`: implemented the memory map and system bus (`Bus`/`MemoryRegion` interfaces, `RamRegion`, `UnmappedRegion`, `DreamcastAddressMap`, `SystemBus`). Handles SH-4 cache-area address mirroring (P0–P3) and the four physical mirrors of main RAM; reserves VRAM/AICA RAM ranges as placeholders for `core-gpu-pvr2`/`core-aica`. 7 JUnit tests added, covering read/write round-trips, little-endian ordering, RAM mirroring, cache-area masking, and unmapped-region fallback.
+- *AI assistance: yes — implemented with Claude (Anthropic), reviewed and tested locally by the project owner (`./gradlew :core-system:test`, all tests passing).*
+- Verified the Gradle multi-module build and the placeholder JavaFX shell (`app-javafx`) launch correctly end-to-end (Linux, Java 21, Gradle 8.7).
+- Added conservative `gradle.properties` (reduced JVM heap, no daemon, no parallel builds) so the project builds reliably on modest/low-RAM hardware.
+
+### Added — initial bootstrap
 - Initial project bootstrap: repository structure, documentation (`README.md`, `CONTRIBUTING.md`, `docs/STATUS.md`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/AI_CONTRIBUTIONS.md`, `docs/AI_CONTINUATION.md`, `docs/MINIMUM_REQUIREMENTS.md`, Portuguese `docs/pt/README.pt.md`), GitHub issue/PR templates, CI workflow skeletons (build/nightly/release), GPLv3 license notice, and a minimal Gradle multi-module skeleton with a placeholder JavaFX window.
-- No emulation functionality yet — see `docs/STATUS.md`.
+- *AI assistance: yes — the entire initial project structure and documentation was bootstrapped with extensive help from Claude (Anthropic), per the project's stated openness to AI-assisted contribution (see `docs/AI_CONTRIBUTIONS.md`).*

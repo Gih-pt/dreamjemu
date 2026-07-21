@@ -19,11 +19,29 @@ Every PR description must clearly answer all four of these questions. **PRs miss
 
 A PR without a real test/validation step (even "no regressions observed running the SH-4 test ROM suite" or similar) is not acceptable — untested claims of correctness are not useful for an accuracy-focused project.
 
+## AI usage disclosure is mandatory on every PR
+
+**Every pull request must state, explicitly, whether AI assistance was used or not** — not just when it was. A one-line statement is enough:
+
+- `AI usage: yes — <brief note on what was AI-assisted, e.g. "implementation drafted with Claude, tested locally by me">`, or
+- `AI usage: no — written entirely by hand`
+
+This applies regardless of how much or how little AI was involved (full generation, partial help, code review assistance, etc.) — partial use still counts as "yes". This is not a judgment of quality either way; it's a transparency requirement so reviewers and future contributors always know the provenance of a change. PRs missing this line will be treated as missing required information, same as the four items above.
+
 ## Where to focus
 
 Contributions are **preferentially expected to target areas flagged as needing work** in [`docs/STATUS.md`](docs/STATUS.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md). If you want to work on something not listed there, please open an issue first to discuss it — this avoids wasted effort on things that are out of scope (e.g. OpenGL support, which will never be added) or already being worked on elsewhere.
 
-`docs/STATUS.md` and `docs/ROADMAP.md` must be kept up to date. If your contribution meaningfully changes what's implemented or what the recommended next steps are, **update these documents as part of the same PR.**
+## Keep project documentation current — every impactful contribution, not just occasionally
+
+`docs/STATUS.md`, `docs/ROADMAP.md`, and `CHANGELOG.md` must be kept up to date **as part of the same PR**, whenever a contribution meaningfully changes what's implemented, what the recommended next steps are, or is otherwise worth recording. In practice, for anything beyond a trivial fix:
+
+- Update `docs/STATUS.md`'s "Done so far" / "Not started yet" / "Immediate recommended next steps" sections, and its **"Last updated" date**, to reflect the change.
+- Add a dated entry to `CHANGELOG.md` describing what changed, including the AI usage disclosure for that entry (see above).
+- If the change affects priorities or what should be worked on next, update `docs/ROADMAP.md` too.
+- If the change adds, removes, or upgrades a dependency, update `docs/DEPENDENCIES.md` too.
+
+Always use the actual current date for these updates — don't leave a stale date from a previous contribution. Keeping these documents current is what lets a new contributor (human or AI, including in a fresh chat via `docs/AI_CONTINUATION.md`) trust them as the source of truth without having to dig through commit history.
 
 ## Rules that apply regardless of who (or what) is contributing
 
@@ -33,6 +51,7 @@ Contributions are **preferentially expected to target areas flagged as needing w
 - Follow the existing module boundaries described in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). If your change needs a new module, explain why in the PR.
 - Keep commits focused; avoid bundling unrelated changes in one PR.
 - Add or update unit/hardware-behavior tests where practical, especially for CPU (SH-4), GPU (PowerVR2), and AICA sound-core logic, where cycle/behavior accuracy matters most.
+- **Adding a new third-party dependency requires updating [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) in the same PR**, including a license compatibility check against GPLv3 (see that document for the exact rule). No paid/proprietary SDKs, ever.
 
 ## AI-assisted contributions
 

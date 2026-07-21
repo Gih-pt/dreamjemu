@@ -16,7 +16,9 @@ The project owner started this for fun, will never monetize it in any way, does 
 4. **No piracy support** — no distributing or linking to games/BIOS/copyrighted material.
 5. **GNU GPL v3.0** license, fully public repository.
 6. **Contribution language is English**; project docs are English-first, Portuguese second; the UI itself is built for easy addition of further languages later.
-7. Metal/arm64 macOS support: only its early abstraction groundwork is an initial-phase goal — do not treat a full Metal backend as near-term scope.
+7. **Every PR must disclose AI usage explicitly — "yes" or "no" — not just when AI was used.**
+8. **`docs/STATUS.md`, `docs/ROADMAP.md`, and `CHANGELOG.md` must be updated (with current dates) in the same PR** whenever a contribution is impactful enough to change what's implemented or planned next. New dependencies must be added to `docs/DEPENDENCIES.md` with a GPLv3 compatibility check.
+9. Metal/arm64 macOS support: only its early abstraction groundwork is an initial-phase goal — do not treat a full Metal backend as near-term scope.
 
 ## Priority order (do not reorder without the project owner's explicit direction)
 
@@ -32,7 +34,7 @@ The project owner started this for fun, will never monetize it in any way, does 
 - `render-vulkan` — the only production rendering backend (LWJGL Vulkan bindings).
 - `render-metal` — early-stage abstraction/stub only, not a functioning backend yet.
 - `common` — shared utilities/logging.
-- `docs/` — `STATUS.md` (what exists now), `ROADMAP.md` (recommended next steps), `ARCHITECTURE.md`, `AI_CONTRIBUTIONS.md`, `MINIMUM_REQUIREMENTS.md`, `pt/` (Portuguese docs).
+- `docs/` — `STATUS.md` (what exists now), `ROADMAP.md` (recommended next steps), `ARCHITECTURE.md`, `AI_CONTRIBUTIONS.md`, `DEPENDENCIES.md` (every third-party dependency + GPLv3 compatibility check), `MINIMUM_REQUIREMENTS.md`, `pt/` (Portuguese docs).
 - `.github/` — issue templates (bug report, compatibility report), PR template, CI workflows for Nightly/Stable builds across Windows/macOS/Linux (and Android tooling as it matures).
 
 ## How to actually pick up work

@@ -72,6 +72,8 @@ See [`docs/MINIMUM_REQUIREMENTS.md`](docs/MINIMUM_REQUIREMENTS.md) for full deta
 | Build system | Gradle (multi-module) | See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | License | GNU GPL v3.0 | See [`LICENSE`](LICENSE) |
 
+See [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) for the full list of third-party dependencies, their purpose, and their license compatibility with GPLv3.
+
 ## Repository structure
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown of modules (CPU, GPU, sound, Maple bus, GD-ROM, rendering backends, UI, common utilities) and how they fit together.
@@ -81,8 +83,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown of mod
 1. Read [`docs/STATUS.md`](docs/STATUS.md) to understand what currently exists.
 2. Read [`docs/ROADMAP.md`](docs/ROADMAP.md) to see recommended next steps and pick something that matches an area flagged as needing work.
 3. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) carefully before opening a pull request — **PRs that don't follow it will be closed without merging**, regardless of code quality.
-4. If you're an AI agent (or a human using one), also read [`docs/AI_CONTRIBUTIONS.md`](docs/AI_CONTRIBUTIONS.md) for contribution *and* review guidance specific to AI-assisted work.
-5. If you want to pick up this project's context in a fresh chat with any AI assistant, see [`docs/AI_CONTINUATION.md`](docs/AI_CONTINUATION.md) — it's a self-contained brief written for that purpose.
+4. Check [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) before adding any new library or tool.
+5. If you're an AI agent (or a human using one), also read [`docs/AI_CONTRIBUTIONS.md`](docs/AI_CONTRIBUTIONS.md) for contribution *and* review guidance specific to AI-assisted work.
+6. If you want to pick up this project's context in a fresh chat with any AI assistant, see [`docs/AI_CONTINUATION.md`](docs/AI_CONTINUATION.md) — it's a self-contained brief written for that purpose.
 
 ## Reporting issues
 
