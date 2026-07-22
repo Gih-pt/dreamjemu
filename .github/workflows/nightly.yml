@@ -27,7 +27,8 @@ jobs:
         run: ./gradlew build --no-daemon
 
       - name: Package nightly artifact
-        run: echo "TODO: jpackage/jlink platform-specific packaging step"
+        run: |
+          echo "TODO: jpackage/jlink platform-specific packaging step"
 
       - name: Publish nightly artifact
         uses: actions/upload-artifact@v4
@@ -43,5 +44,5 @@ jobs:
     steps:
       - name: Note
         run: |
-          echo "TODO: collect per-OS artifacts and publish/update a 'nightly' GitHub Release" \
-               "(e.g. using softprops/action-gh-release with tag_name: nightly, prerelease: true)."
+          echo "TODO: collect per-OS artifacts and publish/update a 'nightly' GitHub Release"
+          echo "(e.g. using softprops/action-gh-release with tag_name: nightly, prerelease: true)."
