@@ -9,7 +9,9 @@ javafx {
 }
 
 application {
-    mainClass.set("org.dreamjemu.app.Main")
+    // Points at Launcher, not Main directly — see Launcher's Javadoc for why
+    // (avoids the "JavaFX runtime components are missing" launcher check).
+    mainClass.set("org.dreamjemu.app.Launcher")
 }
 
 dependencies {
@@ -72,7 +74,7 @@ tasks.register<Exec>("jpackageImage") {
             "--dest", outputDir.get().asFile.absolutePath,
             "--name", "DreamJEmu",
             "--main-jar", mainJarFileName.get(),
-            "--main-class", "org.dreamjemu.app.Main",
+            "--main-class", "org.dreamjemu.app.Launcher",
             "--app-version", sanitizedVersion,
             "--vendor", "DreamJEmu contributors",
             "--description", "DreamJEmu - a free, open-source Dreamcast emulator (no BIOS required)"
