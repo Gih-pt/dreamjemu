@@ -6,9 +6,14 @@ All notable changes to this project should be documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed — 2026-07-22 (commit `d0464cf`)
+- `app-javafx`: fixed "Error: JavaFX runtime components are missing, and are required to run this application" when launching the `jpackage` app-image. Cause: the Java launcher refuses to start a packaged app whose main class directly extends `javafx.application.Application` outside the module path. Fix: added a `Launcher` class that doesn't extend `Application` and just forwards to `Main`; pointed `application.mainClass` (Gradle) and `--main-class` (jpackage) at `Launcher` instead of `Main` directly.
+- **Confirmed working end-to-end on Linux**: the packaged native binary (`app-javafx/build/jpackage/DreamJEmu/bin/DreamJEmu`) launches standalone (no Gradle, no manually-set `JAVA_HOME`) and correctly shows the bootstrap window.
+- *AI assistance: yes — diagnosed and fixed with Claude (Anthropic) from the error message; confirmed working by the project owner on their machine, including a screenshot of the packaged app running.*
+
 ### Added — 2026-07-22
 - `app-javafx`: added a `jpackageImage` Gradle task that builds a native, self-contained application image (bundled Java runtime, platform-native launcher — `DreamJEmu.exe` / `DreamJEmu.app` / `DreamJEmu`) via `jpackage`, so end users won't need Java installed separately. Produces an app-image (a runnable folder), not yet a signed installer (.msi/.dmg/.deb) — that needs additional platform tooling and is a follow-up step. Wired into `.github/workflows/nightly.yml` and `.github/workflows/release.yml`, replacing their previous `TODO: jpackage...` placeholder steps.
-- *AI assistance: yes — implemented with Claude (Anthropic). The `jpackage` tool itself was smoke-tested end-to-end in a sandbox (trivial jar to app-image, ran the generated native launcher successfully) and the workflow YAML was validated with `python3`'s `yaml.safe_load`, but the actual Gradle task could not be run against the full project in that sandbox (no Maven Central access to resolve JavaFX/LWJGL dependencies there) — needs confirmation via `./gradlew :app-javafx:jpackageImage` on a real machine.*
+- *AI assistance: yes — implemented with Claude (Anthropic). Initially only smoke-tested in a sandbox (no Maven Central access there to run the full Gradle task); confirmed working against the real project shortly after, once the Launcher fix above was applied (see that entry).*
 
 ### Added — 2026-07-22 (commit `9df24ab`)
 - `core-gdrom`: implemented `GdiTrackType`, `GdiTrack`, and `GdiImage` — parses a `.gdi` file's track list and reads sector data from the referenced track files (resolved relative to the `.gdi`'s directory), correctly locating the right track/file/byte-offset for a given LBA across multiple tracks. 7 JUnit tests added, covering multi-track parsing, sector reads from two different tracks, an out-of-range LBA, a mismatched track-count header, and a missing referenced track file.

@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-22 (jpackage native app-image packaging added; GDI reading implemented; CI nightly/release workflow YAML fixed). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-22 (jpackage native app-image packaging implemented AND verified working end-to-end; GDI reading implemented; CI nightly/release workflow YAML fixed). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, and native packaging implemented; CI fully green
 
@@ -19,11 +19,12 @@ The project scaffold is in place and verified end-to-end. Real emulation infrast
 - [x] `core-gdrom`: GDI parsing and sector reading implemented and tested (`GdiImage`/`GdiTrack`/`GdiTrackType`; 7 JUnit tests passing). 15 tests total in `core-gdrom`.
 - [x] `docs/DEPENDENCIES.md` added: every third-party dependency, its purpose, and GPLv3 license-compatibility check.
 - [x] `CONTRIBUTING.md` now requires: mandatory AI-usage disclosure (yes/no) on every PR, keeping `docs/STATUS.md` / `docs/ROADMAP.md` / `CHANGELOG.md` current (with dates) on every impactful PR, and updating `docs/DEPENDENCIES.md` when dependencies change.
-- [x] **`app-javafx`: native app-image packaging via `jpackage`.**
+- [x] **`app-javafx`: native app-image packaging via `jpackage` — implemented AND verified working end-to-end.**
   - New Gradle task `:app-javafx:jpackageImage` builds a self-contained application image with a bundled Java runtime and a platform-native launcher (`DreamJEmu.exe` / `DreamJEmu.app` / `DreamJEmu`) — end users won't need Java installed separately.
   - Currently produces an app-image (a runnable folder), **not yet a signed installer** (.msi/.dmg/.deb) — that needs additional platform-specific tooling (WiX on Windows, codesigning certs on macOS, dpkg-dev on Linux) and is a follow-up step, not yet implemented.
   - Wired into `.github/workflows/nightly.yml` and `.github/workflows/release.yml`, replacing their previous `TODO: jpackage...` placeholder steps; both now upload the packaged app-image as a build artifact.
-  - `jpackage` itself was smoke-tested end-to-end in a sandbox (trivial jar → app-image → ran the generated native launcher successfully), and the updated workflow YAML was validated with a real YAML parser. **The actual `:app-javafx:jpackageImage` Gradle task has not yet been run against the full project on a real machine — this needs local confirmation.**
+  - Hit and fixed the classic "Error: JavaFX runtime components are missing" issue: the Java launcher refuses to start a packaged app whose main class directly extends `javafx.application.Application` outside the module path. Fixed with a `Launcher` indirection class (doesn't extend `Application`, just forwards to `Main`), used as the actual `--main-class`/`application.mainClass` instead of `Main` directly.
+  - **Confirmed working on a real machine (Linux)**: the generated native binary (`app-javafx/build/jpackage/DreamJEmu/bin/DreamJEmu`) launches standalone — no Gradle, no manually-set `JAVA_HOME` — and correctly displays the bootstrap window.
 
 ### Not started yet
 
@@ -41,6 +42,6 @@ The project scaffold is in place and verified end-to-end. Real emulation infrast
 
 ## Immediate recommended next steps
 
-1. **Verify `./gradlew :app-javafx:jpackageImage` actually works on the real project** (not yet confirmed outside a trivial smoke test) — check the generated app-image launches and shows the JavaFX window correctly.
-2. Wire `core-cpu-sh4`'s future SH-4 interpreter to `core-system`'s `SystemBus` as the concrete `Bus` implementation.
-3. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
+1. Wire `core-cpu-sh4`'s future SH-4 interpreter to `core-system`'s `SystemBus` as the concrete `Bus` implementation.
+2. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
+3. Consider a signed installer step (.msi/.dmg/.deb) as a follow-up to the working app-image, once there's a real feature worth shipping to end users.
