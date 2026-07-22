@@ -4,6 +4,14 @@ All notable changes to this project should be documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Added — 2026-07-22
+- `core-gdrom`: implemented `GdiTrackType`, `GdiTrack`, and `GdiImage` — parses a `.gdi` file's track list and reads sector data from the referenced track files (resolved relative to the `.gdi`'s directory), correctly locating the right track/file/byte-offset for a given LBA across multiple tracks. 7 JUnit tests added, covering multi-track parsing, sector reads from two different tracks, an out-of-range LBA, a mismatched track-count header, and a missing referenced track file.
+- *AI assistance: yes — implemented with Claude (Anthropic), tested locally by the project owner (`./gradlew :core-gdrom:test`, all tests passing).*
+
+### Fixed — 2026-07-21
+- `.github/workflows/nightly.yml` and `.github/workflows/release.yml`: fixed an invalid-YAML bug where a `run:` step's plain-scalar value contained an unquoted `: ` (colon-space) sequence (`echo "TODO: ..."`), which GitHub Actions rejects as invalid workflow syntax. Switched those steps to block-scalar (`run: |`) style, matching the pattern already used elsewhere in the same files. Verified with `python3`'s `yaml.safe_load` before committing, and confirmed on GitHub Actions afterward that both workflow files pass validation.
+- *AI assistance: yes — diagnosed and fixed with Claude (Anthropic) from a screenshot of the GitHub Actions error; validated locally and confirmed working by the project owner on GitHub Actions.*
+
 ### Added — 2026-07-21
 - `core-gdrom`: implemented `DiscImageDetector`, identifying GDI, CDI, CHD, and CUE/BIN Dreamcast disc image formats via file extension plus structural content verification (magic bytes / text structure), with content-based fallback when the extension is missing or wrong. 8 JUnit tests added, covering all four formats, a mismatched-extension case, garbage content, an unrelated file, and a non-existent file. Does not require or read any original console/BIOS file.
 - *AI assistance: yes — implemented with Claude (Anthropic), reviewed and tested locally by the project owner (`./gradlew :core-gdrom:test`, all tests passing).*
