@@ -24,17 +24,15 @@ jobs:
       - name: Build
         run: ./gradlew build --no-daemon
 
-      - name: Package release artifact
-        run: |
-          echo "TODO: jpackage/jlink platform-specific packaging step, versioned from the git tag"
+      - name: Package release app image (jpackage)
+        run: ./gradlew :app-javafx:jpackageImage --no-daemon
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dreamjemu-${{ github.ref_name }}-${{ matrix.os }}
-          path: |
-            app-javafx/build/libs/*.jar
-          if-no-files-found: ignore
+          path: app-javafx/build/jpackage/**
+          if-no-files-found: warn
 
   publish-release:
     needs: release
@@ -42,5 +40,5 @@ jobs:
     steps:
       - name: Note
         run: |
-          echo "TODO: collect per-OS artifacts and publish a GitHub Release for tag ${{ github.ref_name }}"
+          echo "TODO: collect per-OS app-image artifacts and publish a GitHub Release for tag ${{ github.ref_name }}"
           echo "marked as a Stable build (prerelease: false)."

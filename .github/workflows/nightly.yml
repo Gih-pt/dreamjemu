@@ -26,17 +26,15 @@ jobs:
       - name: Build
         run: ./gradlew build --no-daemon
 
-      - name: Package nightly artifact
-        run: |
-          echo "TODO: jpackage/jlink platform-specific packaging step"
+      - name: Package nightly app image (jpackage)
+        run: ./gradlew :app-javafx:jpackageImage --no-daemon
 
       - name: Publish nightly artifact
         uses: actions/upload-artifact@v4
         with:
           name: dreamjemu-nightly-${{ matrix.os }}-${{ github.sha }}
-          path: |
-            app-javafx/build/libs/*.jar
-          if-no-files-found: ignore
+          path: app-javafx/build/jpackage/**
+          if-no-files-found: warn
 
   publish-release:
     needs: nightly
@@ -44,5 +42,5 @@ jobs:
     steps:
       - name: Note
         run: |
-          echo "TODO: collect per-OS artifacts and publish/update a 'nightly' GitHub Release"
+          echo "TODO: collect per-OS app-image artifacts and publish/update a 'nightly' GitHub Release"
           echo "(e.g. using softprops/action-gh-release with tag_name: nightly, prerelease: true)."
