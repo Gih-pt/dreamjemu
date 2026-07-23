@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-23 (Sh4Cpu wired to core-system's real SystemBus, with integration tests covering main RAM, cache-area mirrors, and safe interaction with unmapped peripheral placeholders). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-23 (SH-4 interpreter: added AND/OR/XOR and shift instructions). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 
@@ -28,10 +28,14 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
   - Previously only tested against a trivial in-module `SimpleTestBus`; now has a dedicated integration test suite (`Sh4CpuSystemBusIntegrationTest`) running the same hand-assembled loop program against the real `SystemBus`/`DreamcastAddressMap`.
   - Covers: execution against real main RAM (with results read back through the bus, not just the register file), identical execution when booted through an SH-4 cache-area mirror (0xA0000000-based addressing, confirming `SystemBus`'s address masking works correctly at the CPU level too), and safe read/write interaction with the still-unmapped VRAM placeholder region (writes silently discarded, reads return 0 — no crash), confirming early bring-up code can safely poke at not-yet-implemented peripherals.
   - Shared instruction encoders (`Sh4Asm`) extracted out of `Sh4CpuTest` so both test classes stay in sync with the interpreter's actual instruction formats. 3 new integration tests; 19 tests total in `core-cpu-sh4`.
+- [x] **`core-cpu-sh4`: added logic (`AND`/`OR`/`XOR`) and shift (`SHLL`/`SHLR`/`SHAL`/`SHAR`) instructions.**
+  - Register-register and R0-immediate forms of `AND`/`OR`/`XOR`. The immediate forms are **zero-extended** (unlike `MOV`/`ADD`/`CMP`'s sign-extended immediates) — tests specifically check this distinction, since getting it wrong is a classic and easy-to-miss interpreter bug.
+  - `SHLL`/`SHAL` (shift left, functionally identical on real hardware) and `SHLR` (logical/zero-fill) vs `SHAR` (arithmetic/sign-fill) shift-right, each setting the T flag from the bit shifted out.
+  - 10 new JUnit tests; 29 tests total in `core-cpu-sh4`.
 
 ### Not started yet
 
-- [ ] SH-4: the rest of the instruction set (delay slots are now handled for BRA; BSR/JMP/JSR/RTS/RTE aren't implemented yet, but can reuse the same delay-slot pattern), MMU, caches, exceptions/interrupts.
+- [ ] SH-4: the rest of the instruction set (logic/shift now covered; still missing: subroutine calls BSR/JSR/RTS, MMU, caches, exceptions/interrupts, more addressing modes for MOV, multiply/divide), delay slots are handled for BRA and can be reused for future delayed branches.
 - [ ] PowerVR2 GPU core.
 - [ ] AICA sound core.
 - [ ] Maple bus (controllers, VMU).
@@ -46,5 +50,5 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 ## Immediate recommended next steps
 
 1. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
-2. Grow the SH-4 instruction set (logic ops AND/OR/XOR, shifts, more addressing modes for MOV) and, when a delayed subroutine-call instruction (BSR/JSR) is added, reuse the delay-slot pattern already built for BRA.
+2. Add subroutine call/return (`BSR`/`JSR`/`RTS`) to `core-cpu-sh4`, reusing the delay-slot pattern already built for `BRA`.
 3. Start sketching the BIOS-free HLE boot sequence, now that CPU+bus wiring exists to actually execute one.

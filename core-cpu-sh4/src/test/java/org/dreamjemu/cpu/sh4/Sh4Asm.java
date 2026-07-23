@@ -62,4 +62,44 @@ final class Sh4Asm {
     static int movLLoad(int n, int m) {
         return 0x6002 | (n << 8) | (m << 4); // MOV.L @Rm,Rn
     }
+
+    static int andReg(int n, int m) {
+        return 0x2009 | (n << 8) | (m << 4);
+    }
+
+    static int orReg(int n, int m) {
+        return 0x200B | (n << 8) | (m << 4);
+    }
+
+    static int xorReg(int n, int m) {
+        return 0x200A | (n << 8) | (m << 4);
+    }
+
+    static int andImmR0(int imm8) {
+        return 0xC900 | (imm8 & 0xFF);
+    }
+
+    static int orImmR0(int imm8) {
+        return 0xCB00 | (imm8 & 0xFF);
+    }
+
+    static int xorImmR0(int imm8) {
+        return 0xCA00 | (imm8 & 0xFF);
+    }
+
+    static int shll(int n) {
+        return 0x4000 | (n << 8);
+    }
+
+    static int shlr(int n) {
+        return 0x4001 | (n << 8);
+    }
+
+    static int shal(int n) {
+        return 0x4020 | (n << 8);
+    }
+
+    static int shar(int n) {
+        return 0x4021 | (n << 8);
+    }
 }

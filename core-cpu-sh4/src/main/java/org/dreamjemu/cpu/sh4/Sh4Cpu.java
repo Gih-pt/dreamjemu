@@ -189,6 +189,41 @@ public class Sh4Cpu {
         } else if ((opcode & 0xF00F) == 0x6002) {
             // MOV.L @Rm,Rn — load from the address held in Rm into Rn.
             r[n] = bus.read32(Integer.toUnsignedLong(r[m]));
+        } else if ((opcode & 0xF00F) == 0x2009) {
+            // AND Rm,Rn
+            r[n] = r[n] & r[m];
+        } else if ((opcode & 0xF00F) == 0x200B) {
+            // OR Rm,Rn
+            r[n] = r[n] | r[m];
+        } else if ((opcode & 0xF00F) == 0x200A) {
+            // XOR Rm,Rn
+            r[n] = r[n] ^ r[m];
+        } else if ((opcode & 0xFF00) == 0xC900) {
+            // AND #imm,R0 — logic immediate ops are ZERO-extended, unlike MOV/ADD/CMP's sign-extended immediates.
+            r[0] = r[0] & (imm8 & 0xFF);
+        } else if ((opcode & 0xFF00) == 0xCB00) {
+            // OR #imm,R0 — zero-extended immediate.
+            r[0] = r[0] | (imm8 & 0xFF);
+        } else if ((opcode & 0xFF00) == 0xCA00) {
+            // XOR #imm,R0 — zero-extended immediate.
+            r[0] = r[0] ^ (imm8 & 0xFF);
+        } else if ((opcode & 0xF0FF) == 0x4000) {
+            // SHLL Rn — logical shift left by 1; T = bit shifted out (old MSB).
+            setT((r[n] >>> 31 & 1) != 0);
+            r[n] = r[n] << 1;
+        } else if ((opcode & 0xF0FF) == 0x4001) {
+            // SHLR Rn — logical shift right by 1 (zero-fill); T = bit shifted out (old LSB).
+            setT((r[n] & 1) != 0);
+            r[n] = r[n] >>> 1;
+        } else if ((opcode & 0xF0FF) == 0x4020) {
+            // SHAL Rn — arithmetic shift left by 1. Identical bit behavior to SHLL on real
+            // hardware (there's no difference between logical/arithmetic left shift).
+            setT((r[n] >>> 31 & 1) != 0);
+            r[n] = r[n] << 1;
+        } else if ((opcode & 0xF0FF) == 0x4021) {
+            // SHAR Rn — arithmetic shift right by 1 (sign-extending); T = bit shifted out (old LSB).
+            setT((r[n] & 1) != 0);
+            r[n] = r[n] >> 1;
         } else {
             throw new UnsupportedOperationException(String.format(
                     "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));

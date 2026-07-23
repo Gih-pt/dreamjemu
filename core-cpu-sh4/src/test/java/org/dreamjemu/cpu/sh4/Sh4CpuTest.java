@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import static org.dreamjemu.cpu.sh4.Sh4Asm.addImm;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.addReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.andImmR0;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.andReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bf;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bra;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bt;
@@ -14,7 +16,15 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoad;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStore;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.nop;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.orImmR0;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.orReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shal;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shar;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shll;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shlr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.xorImmR0;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.xorReg;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -96,6 +106,138 @@ class Sh4CpuTest {
         cpu.step();
 
         assertEquals(7, cpu.r[0]);
+    }
+
+    @Test
+    void andRegPerformsBitwiseAnd() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, andReg(0, 1)); // AND R1,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0b1100;
+        cpu.r[1] = 0b1010;
+
+        cpu.step();
+
+        assertEquals(0b1000, cpu.r[0]);
+    }
+
+    @Test
+    void orRegPerformsBitwiseOr() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, orReg(0, 1)); // OR R1,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0b1100;
+        cpu.r[1] = 0b1010;
+
+        cpu.step();
+
+        assertEquals(0b1110, cpu.r[0]);
+    }
+
+    @Test
+    void xorRegPerformsBitwiseXor() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, xorReg(0, 1)); // XOR R1,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0b1100;
+        cpu.r[1] = 0b1010;
+
+        cpu.step();
+
+        assertEquals(0b0110, cpu.r[0]);
+    }
+
+    @Test
+    void andImmR0ZeroExtendsTheImmediateUnlikeMovAndAdd() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, andImmR0(0x80)); // AND #0x80,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0xFFFFFFFF;
+
+        cpu.step();
+
+        // If 0x80 were wrongly sign-extended to 0xFFFFFF80 (like MOV/ADD/CMP's
+        // immediates), the result would be 0xFFFFFF80 instead.
+        assertEquals(0x00000080, cpu.r[0]);
+    }
+
+    @Test
+    void orImmR0ZeroExtendsTheImmediateUnlikeMovAndAdd() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, orImmR0(0x80)); // OR #0x80,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x00000000;
+
+        cpu.step();
+
+        assertEquals(0x00000080, cpu.r[0]);
+    }
+
+    @Test
+    void xorImmR0ZeroExtendsTheImmediateUnlikeMovAndAdd() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, xorImmR0(0x80)); // XOR #0x80,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0xFFFFFFFF;
+
+        cpu.step();
+
+        // Zero-extended 0x80 flips only bit 7; a wrongly sign-extended 0xFFFFFF80
+        // would instead flip the low 8 bits' complement pattern (result 0x0000007F).
+        assertEquals(0xFFFFFF7F, cpu.r[0]);
+    }
+
+    @Test
+    void shllShiftsLeftAndSetsTFromOldMsb() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shll(0)); // SHLL R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000001;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag(), "T should hold the bit shifted out (old MSB, which was 1)");
+        assertEquals(0x00000002, cpu.r[0]);
+    }
+
+    @Test
+    void shlrShiftsRightLogicallyAndSetsTFromOldLsb() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shlr(0)); // SHLR R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000001;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag(), "T should hold the bit shifted out (old LSB, which was 1)");
+        assertEquals(0x40000000, cpu.r[0], "SHLR is a logical shift: the vacated top bit must be zero-filled");
+    }
+
+    @Test
+    void shalBehavesIdenticallyToShll() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shal(0)); // SHAL R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000001;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag());
+        assertEquals(0x00000002, cpu.r[0]);
+    }
+
+    @Test
+    void sharShiftsRightArithmeticallyPreservingSign() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shar(0)); // SHAR R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000001;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag(), "T should hold the bit shifted out (old LSB, which was 1)");
+        assertEquals(0xC0000000, cpu.r[0],
+                "SHAR is an arithmetic shift: the vacated top bit must be sign-filled (1, since the value was negative)");
     }
 
     @Test
