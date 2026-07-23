@@ -1,10 +1,10 @@
 # Project Status
 
-*Last updated: 2026-07-22 (jpackage native app-image packaging implemented AND verified working end-to-end; GDI reading implemented; CI nightly/release workflow YAML fixed). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-23 (SH-4 interpreter bring-up: first testable instruction subset implemented and tested). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
-## Current state: bootstrap complete; system bus, disc reading, and native packaging implemented; CI fully green
+## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 
-The project scaffold is in place and verified end-to-end. Real emulation infrastructure now exists and is tested: the system memory bus, Dreamcast disc image format detection, and GDI parsing/sector reading. The app can also now be packaged into a native, self-contained executable (no separate Java install needed for end users). All three GitHub Actions workflows (Build, Nightly, Release) are syntactically valid; Build passes on every push across Windows/macOS/Linux.
+Real emulation infrastructure now spans four areas: the system memory bus, Dreamcast disc image format detection/reading, native app packaging, and — as of this update — the beginning of the SH-4 CPU interpreter.
 
 ### Done so far
 
@@ -15,20 +15,20 @@ The project scaffold is in place and verified end-to-end. Real emulation infrast
 - [x] Placeholder JavaFX window (`app-javafx`) verified to launch and display correctly.
 - [x] CI verified on GitHub Actions: `build.yml` passes on `windows-latest`/`macos-latest`/`ubuntu-latest`. `nightly.yml`/`release.yml` invalid-YAML bug fixed and confirmed working.
 - [x] `core-system`: memory map and system bus implemented and tested (7 JUnit tests passing).
-- [x] `core-gdrom`: disc image format detection implemented and tested (`DiscImageDetector` — GDI, CDI, CHD, CUE/BIN; 8 JUnit tests passing).
-- [x] `core-gdrom`: GDI parsing and sector reading implemented and tested (`GdiImage`/`GdiTrack`/`GdiTrackType`; 7 JUnit tests passing). 15 tests total in `core-gdrom`.
+- [x] `core-gdrom`: disc image format detection implemented and tested (8 JUnit tests) plus GDI parsing/sector reading implemented and tested (7 JUnit tests). 15 tests total in `core-gdrom`.
 - [x] `docs/DEPENDENCIES.md` added: every third-party dependency, its purpose, and GPLv3 license-compatibility check.
-- [x] `CONTRIBUTING.md` now requires: mandatory AI-usage disclosure (yes/no) on every PR, keeping `docs/STATUS.md` / `docs/ROADMAP.md` / `CHANGELOG.md` current (with dates) on every impactful PR, and updating `docs/DEPENDENCIES.md` when dependencies change.
-- [x] **`app-javafx`: native app-image packaging via `jpackage` — implemented AND verified working end-to-end.**
-  - New Gradle task `:app-javafx:jpackageImage` builds a self-contained application image with a bundled Java runtime and a platform-native launcher (`DreamJEmu.exe` / `DreamJEmu.app` / `DreamJEmu`) — end users won't need Java installed separately.
-  - Currently produces an app-image (a runnable folder), **not yet a signed installer** (.msi/.dmg/.deb) — that needs additional platform-specific tooling (WiX on Windows, codesigning certs on macOS, dpkg-dev on Linux) and is a follow-up step, not yet implemented.
-  - Wired into `.github/workflows/nightly.yml` and `.github/workflows/release.yml`, replacing their previous `TODO: jpackage...` placeholder steps; both now upload the packaged app-image as a build artifact.
-  - Hit and fixed the classic "Error: JavaFX runtime components are missing" issue: the Java launcher refuses to start a packaged app whose main class directly extends `javafx.application.Application` outside the module path. Fixed with a `Launcher` indirection class (doesn't extend `Application`, just forwards to `Main`), used as the actual `--main-class`/`application.mainClass` instead of `Main` directly.
-  - **Confirmed working on a real machine (Linux)**: the generated native binary (`app-javafx/build/jpackage/DreamJEmu/bin/DreamJEmu`) launches standalone — no Gradle, no manually-set `JAVA_HOME` — and correctly displays the bootstrap window.
+- [x] `CONTRIBUTING.md` requires: mandatory AI-usage disclosure (yes/no) on every PR, keeping `docs/STATUS.md` / `docs/ROADMAP.md` / `CHANGELOG.md` current (with dates), and updating `docs/DEPENDENCIES.md` when dependencies change.
+- [x] `app-javafx`: native app-image packaging via `jpackage` — implemented AND verified working end-to-end (bundled Java runtime, native launcher, confirmed running standalone on Linux). Fixed a "JavaFX runtime components are missing" launcher issue along the way (see CHANGELOG).
+- [x] **`core-cpu-sh4`: SH-4 interpreter bring-up — first testable instruction subset implemented and tested.**
+  - `Sh4Cpu`: register file (R0-R15), PC, PR, a T-flag-only status register, and a `step()` fetch-decode-execute loop against the generic `Bus` interface from `core-system` (deliberately NOT coupled to `SystemBus`/`DreamcastAddressMap` — the interpreter should work against any Bus implementation).
+  - Implements 12 instructions so far: `NOP`, `MOV #imm,Rn`, `MOV Rm,Rn`, `ADD #imm,Rn`, `ADD Rm,Rn`, `SUB Rm,Rn`, `CMP/EQ Rm,Rn`, `CMP/EQ #imm,R0`, `BT`, `BF`, `BRA`, `MOV.L Rm,@Rn`/`MOV.L @Rm,Rn`. Everything else throws `UnsupportedOperationException` with the offending opcode and PC, by design (gaps are loud, not silently wrong).
+  - **Known, documented simplification: delay slots are NOT implemented yet.** Real SH-4 hardware executes the instruction after a delayed-branch (BRA, and eventually BSR/JMP/JSR/RTS/RTE) before the branch takes effect; this interpreter branches immediately instead. This must be fixed before real game code (which relies on delay-slot behavior almost universally) can run correctly — tracked as follow-up accuracy work.
+  - 13 JUnit tests passing (`./gradlew :core-cpu-sh4:test`), covering every implemented instruction individually, plus one integration test: a hand-assembled loop program that sums 5+4+3+2+1 into a register using real conditional branching, then stores the result to memory and reads it back — 25 CPU steps, verified against both the register value and the stored memory content.
 
 ### Not started yet
 
-- [ ] SH-4 CPU core (interpreter) — stub class exists (`core-cpu-sh4`), can now be wired to the real `Bus` implementation from `core-system`.
+- [ ] SH-4: delay slots (critical accuracy gap, see above), the rest of the instruction set, MMU, caches, exceptions/interrupts.
+- [ ] Wiring `Sh4Cpu` to `core-system`'s real `SystemBus` (tested so far only against a trivial in-module test Bus).
 - [ ] PowerVR2 GPU core.
 - [ ] AICA sound core.
 - [ ] Maple bus (controllers, VMU).
@@ -42,6 +42,6 @@ The project scaffold is in place and verified end-to-end. Real emulation infrast
 
 ## Immediate recommended next steps
 
-1. Wire `core-cpu-sh4`'s future SH-4 interpreter to `core-system`'s `SystemBus` as the concrete `Bus` implementation.
-2. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
-3. Consider a signed installer step (.msi/.dmg/.deb) as a follow-up to the working app-image, once there's a real feature worth shipping to end users.
+1. Implement delay slots for `BRA` (and design the pattern to extend to `BSR`/`JMP`/`JSR`/`RTS` later) — this is a correctness-critical gap, not a nice-to-have.
+2. Wire `Sh4Cpu` to `core-system`'s real `SystemBus`, and write an integration test that boots through a tiny HLE sequence touching real Dreamcast physical addresses (main RAM, and the VRAM/AICA placeholder regions).
+3. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
