@@ -195,7 +195,8 @@ class Sh4CpuTest {
     @Test
     void braBranchesUnconditionallyForwardAndBackward() {
         SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
-        bus.writeInstruction(0, bra(2)); // target = 0 + 4 + 2*2 = 8
+        bus.writeInstruction(0, bra(2));   // target = 0 + 4 + 2*2 = 8
+        bus.writeInstruction(2, 0x0009);   // NOP delay slot (required — BRA is a delayed branch)
         Sh4Cpu cpu = new Sh4Cpu(bus, 0);
 
         cpu.step();
@@ -203,9 +204,33 @@ class Sh4CpuTest {
 
         // Negative displacement (backward branch)
         bus.writeInstruction(20, bra(-5)); // target = 20 + 4 + (-5*2) = 14
+        bus.writeInstruction(22, 0x0009);  // NOP delay slot
         cpu.pc = 20;
         cpu.step();
         assertEquals(14, cpu.pc);
+    }
+
+    @Test
+    void braExecutesDelaySlotInstructionBeforeJumping() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bra(2));         // target = 0 + 4 + 2*2 = 8
+        bus.writeInstruction(2, movImm(0, 99));  // delay slot: MOV #99,R0 — must execute BEFORE the jump
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step();
+
+        assertEquals(99, cpu.r[0], "the delay slot instruction's effect must be visible");
+        assertEquals(8, cpu.pc, "PC must land on the branch target, not thisPc+2 or thisPc+4");
+    }
+
+    @Test
+    void branchInDelaySlotIsIllegal() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bra(2));
+        bus.writeInstruction(2, bt(0)); // illegal: a branch instruction in a delay slot
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        assertThrows(IllegalStateException.class, cpu::step);
     }
 
     @Test

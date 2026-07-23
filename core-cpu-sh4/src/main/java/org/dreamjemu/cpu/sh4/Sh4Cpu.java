@@ -19,21 +19,27 @@ import org.dreamjemu.system.Bus;
  * concrete memory map — it can be tested against a trivial in-memory Bus
  * (see Sh4CpuTest) without needing the rest of the system.
  *
- * <b>Known simplifications (tracked as follow-up accuracy work — see
- * /docs/ROADMAP.md Phase 1/2, and must be fixed before this core can run
- * real software correctly):</b>
+ * <b>Delay slots:</b> real SH-4 hardware executes the instruction
+ * immediately following a <i>delayed</i> branch (BRA, and eventually
+ * BSR/JMP/JSR/RTS/RTE once implemented) before the branch takes effect.
+ * {@code BT}/{@code BF} are NOT delayed branches on real hardware and never
+ * have a delay slot. This interpreter now models delay-slot execution for
+ * {@code BRA} (the only delayed-branch instruction implemented so far):
+ * the instruction at {@code PC+2} is executed first, and only then does
+ * {@code PC} jump to the branch target. Placing a branch instruction
+ * itself in a delay slot is illegal on real hardware (it raises an
+ * "illegal slot instruction" exception); this interpreter throws an
+ * {@link IllegalStateException} in that case rather than silently
+ * misbehaving.
+ *
+ * <b>Other known simplifications (tracked as follow-up accuracy work — see
+ * /docs/ROADMAP.md):</b>
  * <ul>
- *   <li>Delay slots are NOT implemented. On real SH-4 hardware, delayed
- *       branch instructions (BRA, and eventually BSR/JMP/JSR/RTS/RTE)
- *       execute the instruction immediately after them ("the delay slot")
- *       before the branch takes effect. This interpreter branches
- *       immediately instead, which will produce wrong results for any real
- *       code that relies on delay-slot behavior (nearly all real SH-4
- *       code does).</li>
- *   <li>Only the small instruction subset implemented in {@link #step()} is
- *       supported; everything else throws {@link UnsupportedOperationException}
- *       with the offending opcode and address, by design — gaps should be
- *       loud, not silently wrong.</li>
+ *   <li>Only the small instruction subset implemented in
+ *       {@link #executeNonDelayedInstruction} (plus {@code BRA}, handled in
+ *       {@link #step()}) is supported; everything else throws
+ *       {@link UnsupportedOperationException} with the offending opcode and
+ *       address, by design — gaps should be loud, not silently wrong.</li>
  *   <li>The Status Register only models the T ("test"/comparison result)
  *       flag so far; other bits (interrupt mask, privilege mode, etc.) are
  *       not modeled yet.</li>
@@ -80,21 +86,69 @@ public class Sh4Cpu {
     }
 
     /**
-     * Fetches, decodes, and executes exactly one instruction, advancing
-     * {@link #pc} sequentially or to a branch target as appropriate.
+     * Fetches, decodes, and executes exactly one instruction at {@link #pc},
+     * advancing it sequentially, to a branch target, or — for delayed
+     * branches like {@code BRA} — first executing the delay-slot
+     * instruction and then jumping to the target. See the class Javadoc for
+     * delay-slot semantics.
      *
-     * @throws UnsupportedOperationException if the opcode isn't one of the
+     * @throws UnsupportedOperationException if an opcode isn't one of the
      *         instructions implemented so far
+     * @throws IllegalStateException if a delay slot contains a branch
+     *         instruction (illegal on real hardware too)
      */
     public void step() {
         int thisPc = pc;
-        int opcode = bus.read16(Integer.toUnsignedLong(thisPc)) & 0xFFFF;
+        int opcode = fetch(thisPc);
 
+        if ((opcode & 0xF000) == 0xA000) {
+            // BRA label — delayed branch: the instruction at thisPc+2 (the
+            // delay slot) executes BEFORE the jump takes effect.
+            int disp12 = signExtend12(opcode & 0x0FFF);
+            int target = thisPc + 4 + disp12 * 2;
+            executeDelaySlot(thisPc + 2);
+            pc = target;
+            return;
+        }
+
+        pc = executeNonDelayedInstruction(thisPc, opcode);
+    }
+
+    /**
+     * Executes the single instruction in a delayed branch's delay slot.
+     * Discards its "natural next PC" — the enclosing branch's target
+     * overrides it regardless of what the slot instruction itself would
+     * have advanced PC to.
+     */
+    private void executeDelaySlot(int slotPc) {
+        int opcode = fetch(slotPc);
+        if (isBranchOpcode(opcode)) {
+            throw new IllegalStateException(String.format(
+                    "Illegal slot instruction: opcode 0x%04X at PC=0x%08X is a branch " +
+                            "and cannot appear in a delay slot", opcode, slotPc));
+        }
+        executeNonDelayedInstruction(slotPc, opcode);
+    }
+
+    private static boolean isBranchOpcode(int opcode) {
+        return (opcode & 0xF000) == 0xA000   // BRA
+                || (opcode & 0xFF00) == 0x8900  // BT
+                || (opcode & 0xFF00) == 0x8B00; // BF
+    }
+
+    /**
+     * Decodes and executes any implemented instruction EXCEPT the delayed
+     * branch {@code BRA} (handled separately in {@link #step()} because of
+     * its delay-slot semantics). Returns the address execution should
+     * continue at for non-branching/non-delayed instructions (either
+     * {@code thisPc + 2}, or a branch target for the non-delayed {@code BT}/
+     * {@code BF} instructions).
+     */
+    private int executeNonDelayedInstruction(int thisPc, int opcode) {
         int n = (opcode >> 8) & 0xF;
         int m = (opcode >> 4) & 0xF;
         int imm8 = opcode & 0xFF;
-
-        int nextPc = thisPc + 2; // default for non-branch instructions
+        int nextPc = thisPc + 2;
 
         if (opcode == 0x0009) {
             // NOP — no operation.
@@ -120,21 +174,15 @@ public class Sh4Cpu {
             // CMP/EQ #imm,R0 — T = (R0 == sign-extended 8-bit immediate)
             setT(r[0] == signExtend8(imm8));
         } else if ((opcode & 0xFF00) == 0x8900) {
-            // BT label — branch if T is set. Not a delayed branch on real hardware either.
+            // BT label — branch if T is set. NOT a delayed branch on real hardware.
             if (tFlag()) {
                 nextPc = thisPc + 4 + signExtend8(imm8) * 2;
             }
         } else if ((opcode & 0xFF00) == 0x8B00) {
-            // BF label — branch if T is clear. Not a delayed branch on real hardware either.
+            // BF label — branch if T is clear. NOT a delayed branch on real hardware.
             if (!tFlag()) {
                 nextPc = thisPc + 4 + signExtend8(imm8) * 2;
             }
-        } else if ((opcode & 0xF000) == 0xA000) {
-            // BRA label — unconditional branch. On real hardware this IS a delayed
-            // branch (the following instruction executes first); this interpreter
-            // does NOT implement the delay slot yet — see class Javadoc.
-            int disp12 = signExtend12(opcode & 0x0FFF);
-            nextPc = thisPc + 4 + disp12 * 2;
         } else if ((opcode & 0xF00F) == 0x2002) {
             // MOV.L Rm,@Rn — store Rm's value to the address held in Rn.
             bus.write32(Integer.toUnsignedLong(r[n]), r[m]);
@@ -146,7 +194,11 @@ public class Sh4Cpu {
                     "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));
         }
 
-        pc = nextPc;
+        return nextPc;
+    }
+
+    private int fetch(int address) {
+        return bus.read16(Integer.toUnsignedLong(address)) & 0xFFFF;
     }
 
     private static int signExtend8(int value) {
