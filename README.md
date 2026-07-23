@@ -78,6 +78,17 @@ See [`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md) for the full list of third-pa
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown of modules (CPU, GPU, sound, Maple bus, GD-ROM, rendering backends, UI, common utilities) and how they fit together.
 
+## Building from source
+
+See [`docs/BUILDING.md`](docs/BUILDING.md) for full clone/build/test/run/packaging instructions. Quick start:
+
+```bash
+git clone https://github.com/Gih-pt/dreamjemu.git
+cd dreamjemu
+JAVA_HOME=/path/to/your/jdk-21 ./gradlew build --no-daemon
+./gradlew :app-javafx:run --no-daemon
+```
+
 ## Getting started as a contributor
 
 1. Read [`docs/STATUS.md`](docs/STATUS.md) to understand what currently exists.

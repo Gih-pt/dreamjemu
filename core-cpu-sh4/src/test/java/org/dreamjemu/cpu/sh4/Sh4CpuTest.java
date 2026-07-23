@@ -2,6 +2,19 @@ package org.dreamjemu.cpu.sh4;
 
 import org.junit.jupiter.api.Test;
 
+import static org.dreamjemu.cpu.sh4.Sh4Asm.addImm;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.addReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.bf;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.bra;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.bt;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqImmR0;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movImm;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStore;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.nop;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.subReg;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -11,55 +24,7 @@ class Sh4CpuTest {
 
     private static final int MEM_SIZE = 256;
 
-    // --- Instruction encoders, mirroring the SH-4 ISA formats implemented in Sh4Cpu ---
-
-    private static int movImm(int n, int imm8) {
-        return 0xE000 | (n << 8) | (imm8 & 0xFF);
-    }
-
-    private static int movReg(int n, int m) {
-        return 0x6003 | (n << 8) | (m << 4);
-    }
-
-    private static int addImm(int n, int imm8) {
-        return 0x7000 | (n << 8) | (imm8 & 0xFF);
-    }
-
-    private static int addReg(int n, int m) {
-        return 0x300C | (n << 8) | (m << 4);
-    }
-
-    private static int subReg(int n, int m) {
-        return 0x3008 | (n << 8) | (m << 4);
-    }
-
-    private static int cmpEqReg(int n, int m) {
-        return 0x3000 | (n << 8) | (m << 4);
-    }
-
-    private static int cmpEqImmR0(int imm8) {
-        return 0x8800 | (imm8 & 0xFF);
-    }
-
-    private static int bt(int disp8) {
-        return 0x8900 | (disp8 & 0xFF);
-    }
-
-    private static int bf(int disp8) {
-        return 0x8B00 | (disp8 & 0xFF);
-    }
-
-    private static int bra(int disp12) {
-        return 0xA000 | (disp12 & 0x0FFF);
-    }
-
-    private static int movLStore(int n, int m) {
-        return 0x2002 | (n << 8) | (m << 4); // MOV.L Rm,@Rn
-    }
-
-    private static int movLLoad(int n, int m) {
-        return 0x6002 | (n << 8) | (m << 4); // MOV.L @Rm,Rn
-    }
+    // Instruction encoders live in Sh4Asm (shared with Sh4CpuSystemBusIntegrationTest).
 
     @Test
     void nopAdvancesPcOnly() {

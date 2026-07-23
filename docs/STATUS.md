@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-23 (SH-4 interpreter: delay slots implemented for BRA). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-23 (Sh4Cpu wired to core-system's real SystemBus, with integration tests covering main RAM, cache-area mirrors, and safe interaction with unmapped peripheral placeholders). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 
@@ -24,11 +24,14 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
   - Implements 12 instructions so far: `NOP`, `MOV #imm,Rn`, `MOV Rm,Rn`, `ADD #imm,Rn`, `ADD Rm,Rn`, `SUB Rm,Rn`, `CMP/EQ Rm,Rn`, `CMP/EQ #imm,R0`, `BT`, `BF`, `BRA`, `MOV.L Rm,@Rn`/`MOV.L @Rm,Rn`. Everything else throws `UnsupportedOperationException` with the offending opcode and PC, by design (gaps are loud, not silently wrong).
   - **Delay slots are now implemented for `BRA`** (the only delayed-branch instruction implemented so far): the instruction at `PC+2` executes before the jump takes effect, matching real SH-4 hardware. Placing a branch instruction in a delay slot (illegal on real hardware) throws `IllegalStateException`, matching the "illegal slot instruction" concept rather than silently misbehaving. `BT`/`BF` remain correctly non-delayed (they never have a delay slot on real hardware either). This pattern is ready to extend to `BSR`/`JMP`/`JSR`/`RTS`/`RTE` once those are implemented.
   - 16 JUnit tests passing (`./gradlew :core-cpu-sh4:test`), covering every implemented instruction individually, delay-slot execution order, illegal-slot-instruction detection, plus one integration test: a hand-assembled loop program that sums 5+4+3+2+1 into a register using real conditional branching, then stores the result to memory and reads it back — 25 CPU steps, verified against both the register value and the stored memory content.
+- [x] **`core-cpu-sh4`: `Sh4Cpu` wired to core-system's real `SystemBus`.**
+  - Previously only tested against a trivial in-module `SimpleTestBus`; now has a dedicated integration test suite (`Sh4CpuSystemBusIntegrationTest`) running the same hand-assembled loop program against the real `SystemBus`/`DreamcastAddressMap`.
+  - Covers: execution against real main RAM (with results read back through the bus, not just the register file), identical execution when booted through an SH-4 cache-area mirror (0xA0000000-based addressing, confirming `SystemBus`'s address masking works correctly at the CPU level too), and safe read/write interaction with the still-unmapped VRAM placeholder region (writes silently discarded, reads return 0 — no crash), confirming early bring-up code can safely poke at not-yet-implemented peripherals.
+  - Shared instruction encoders (`Sh4Asm`) extracted out of `Sh4CpuTest` so both test classes stay in sync with the interpreter's actual instruction formats. 3 new integration tests; 19 tests total in `core-cpu-sh4`.
 
 ### Not started yet
 
 - [ ] SH-4: the rest of the instruction set (delay slots are now handled for BRA; BSR/JMP/JSR/RTS/RTE aren't implemented yet, but can reuse the same delay-slot pattern), MMU, caches, exceptions/interrupts.
-- [ ] Wiring `Sh4Cpu` to `core-system`'s real `SystemBus` (tested so far only against a trivial in-module test Bus).
 - [ ] PowerVR2 GPU core.
 - [ ] AICA sound core.
 - [ ] Maple bus (controllers, VMU).
@@ -42,6 +45,6 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 
 ## Immediate recommended next steps
 
-1. Wire `Sh4Cpu` to `core-system`'s real `SystemBus`, and write an integration test that exercises real Dreamcast physical addresses (main RAM, and the VRAM/AICA placeholder regions).
-2. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
-3. Grow the SH-4 instruction set (logic ops AND/OR/XOR, shifts, more addressing modes for MOV) and, when a delayed subroutine-call instruction (BSR/JSR) is added, reuse the delay-slot pattern already built for BRA.
+1. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
+2. Grow the SH-4 instruction set (logic ops AND/OR/XOR, shifts, more addressing modes for MOV) and, when a delayed subroutine-call instruction (BSR/JSR) is added, reuse the delay-slot pattern already built for BRA.
+3. Start sketching the BIOS-free HLE boot sequence, now that CPU+bus wiring exists to actually execute one.

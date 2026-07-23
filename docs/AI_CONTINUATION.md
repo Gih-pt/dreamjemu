@@ -34,7 +34,7 @@ The project owner started this for fun, will never monetize it in any way, does 
 - `render-vulkan` — the only production rendering backend (LWJGL Vulkan bindings).
 - `render-metal` — early-stage abstraction/stub only, not a functioning backend yet.
 - `common` — shared utilities/logging.
-- `docs/` — `STATUS.md` (what exists now), `ROADMAP.md` (recommended next steps), `ARCHITECTURE.md`, `AI_CONTRIBUTIONS.md`, `DEPENDENCIES.md` (every third-party dependency + GPLv3 compatibility check), `MINIMUM_REQUIREMENTS.md`, `pt/` (Portuguese docs).
+- `docs/` — `STATUS.md` (what exists now), `ROADMAP.md` (recommended next steps), `ARCHITECTURE.md`, `AI_CONTRIBUTIONS.md`, `DEPENDENCIES.md` (every third-party dependency + GPLv3 compatibility check), `BUILDING.md` (clone/build/test/run/packaging instructions), `MINIMUM_REQUIREMENTS.md`, `pt/` (Portuguese docs).
 - `.github/` — issue templates (bug report, compatibility report), PR template, CI workflows for Nightly/Stable builds across Windows/macOS/Linux (and Android tooling as it matures).
 
 ## How to actually pick up work
