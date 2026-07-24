@@ -102,4 +102,16 @@ final class Sh4Asm {
     static int shar(int n) {
         return 0x4021 | (n << 8);
     }
+
+    static int bsr(int disp12) {
+        return 0xB000 | (disp12 & 0x0FFF);
+    }
+
+    static int jsr(int n) {
+        return 0x400B | (n << 8);
+    }
+
+    static int rts() {
+        return 0x000B;
+    }
 }

@@ -20,17 +20,19 @@ import org.dreamjemu.system.Bus;
  * (see Sh4CpuTest) without needing the rest of the system.
  *
  * <b>Delay slots:</b> real SH-4 hardware executes the instruction
- * immediately following a <i>delayed</i> branch (BRA, and eventually
- * BSR/JMP/JSR/RTS/RTE once implemented) before the branch takes effect.
+ * immediately following a <i>delayed</i> branch ({@code BRA}, {@code BSR},
+ * {@code JSR}, {@code RTS}, and eventually {@code JMP}/{@code RTE} once
+ * implemented) before the branch takes effect.
  * {@code BT}/{@code BF} are NOT delayed branches on real hardware and never
- * have a delay slot. This interpreter now models delay-slot execution for
- * {@code BRA} (the only delayed-branch instruction implemented so far):
- * the instruction at {@code PC+2} is executed first, and only then does
- * {@code PC} jump to the branch target. Placing a branch instruction
- * itself in a delay slot is illegal on real hardware (it raises an
- * "illegal slot instruction" exception); this interpreter throws an
- * {@link IllegalStateException} in that case rather than silently
- * misbehaving.
+ * have a delay slot. This interpreter models delay-slot execution for all
+ * currently-implemented delayed branches: the instruction at {@code PC+2}
+ * is executed first, and only then does {@code PC} jump to the branch
+ * target (for {@code JSR}, the target register is read BEFORE the delay
+ * slot runs, in case the delay slot modifies that register — matching real
+ * hardware). Placing a branch instruction itself in a delay slot is
+ * illegal on real hardware (it raises an "illegal slot instruction"
+ * exception); this interpreter throws an {@link IllegalStateException} in
+ * that case rather than silently misbehaving.
  *
  * <b>Other known simplifications (tracked as follow-up accuracy work — see
  * /docs/ROADMAP.md):</b>
@@ -110,6 +112,35 @@ public class Sh4Cpu {
             pc = target;
             return;
         }
+        if ((opcode & 0xF000) == 0xB000) {
+            // BSR label — delayed subroutine call. PR gets the return address
+            // (thisPc+4, i.e. the address right after the delay slot) BEFORE
+            // the delay slot runs, matching real hardware.
+            int disp12 = signExtend12(opcode & 0x0FFF);
+            int target = thisPc + 4 + disp12 * 2;
+            pr = thisPc + 4;
+            executeDelaySlot(thisPc + 2);
+            pc = target;
+            return;
+        }
+        if ((opcode & 0xF0FF) == 0x400B) {
+            // JSR @Rn — delayed subroutine call through a register. The
+            // target register is read NOW, before the delay slot executes,
+            // in case the delay slot instruction itself modifies Rn.
+            int n = (opcode >> 8) & 0xF;
+            int target = r[n];
+            pr = thisPc + 4;
+            executeDelaySlot(thisPc + 2);
+            pc = target;
+            return;
+        }
+        if (opcode == 0x000B) {
+            // RTS — delayed return: jump to PR, after executing the delay slot.
+            int target = pr;
+            executeDelaySlot(thisPc + 2);
+            pc = target;
+            return;
+        }
 
         pc = executeNonDelayedInstruction(thisPc, opcode);
     }
@@ -132,6 +163,9 @@ public class Sh4Cpu {
 
     private static boolean isBranchOpcode(int opcode) {
         return (opcode & 0xF000) == 0xA000   // BRA
+                || (opcode & 0xF000) == 0xB000  // BSR
+                || (opcode & 0xF0FF) == 0x400B  // JSR
+                || opcode == 0x000B             // RTS
                 || (opcode & 0xFF00) == 0x8900  // BT
                 || (opcode & 0xFF00) == 0x8B00; // BF
     }

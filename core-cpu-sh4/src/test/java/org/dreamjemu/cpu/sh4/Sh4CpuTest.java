@@ -8,9 +8,11 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.andImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.andReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bf;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bra;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.bsr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bt;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.jsr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movImm;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoad;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStore;
@@ -18,6 +20,7 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.movReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.nop;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shal;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shar;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shll;
@@ -415,5 +418,94 @@ class Sh4CpuTest {
         assertEquals(15, bus.read32(0x40), "The sum should also have been stored to memory at address 0x40");
         // setup (4) + 5 loop iterations * 4 instructions (20) + final MOV.L (1) = 25 steps
         assertEquals(25, steps);
+    }
+
+    @Test
+    void bsrSetsPrAndBranchesAfterDelaySlot() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bsr(2));         // target = 0 + 4 + 2*2 = 8
+        bus.writeInstruction(2, movImm(0, 99));  // delay slot, must execute before the jump
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step();
+
+        assertEquals(99, cpu.r[0], "the delay slot instruction's effect must be visible");
+        assertEquals(8, cpu.pc, "PC must land on the subroutine target");
+        assertEquals(4, cpu.pr, "PR must hold the return address (thisPc + 4)");
+    }
+
+    @Test
+    void jsrReadsTargetRegisterBeforeDelaySlotRuns() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, jsr(1));         // JSR @R1
+        bus.writeInstruction(2, movImm(1, 50));  // delay slot: overwrites R1 itself
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 20; // subroutine target address, read BEFORE the delay slot changes R1
+
+        cpu.step();
+
+        assertEquals(20, cpu.pc, "the target must be R1's value at JSR time, not after the delay slot modified it");
+        assertEquals(50, cpu.r[1], "the delay slot instruction still executes and its effect is visible");
+        assertEquals(4, cpu.pr, "PR must hold the return address (thisPc + 4)");
+    }
+
+    @Test
+    void rtsReturnsToPrAfterDelaySlot() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, rts());
+        bus.writeInstruction(2, movImm(0, 7)); // delay slot, must execute before the jump
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.pr = 40;
+
+        cpu.step();
+
+        assertEquals(7, cpu.r[0], "the delay slot instruction's effect must be visible");
+        assertEquals(40, cpu.pc, "PC must land on PR's address");
+    }
+
+    @Test
+    void branchInBsrDelaySlotIsIllegal() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bsr(2));
+        bus.writeInstruction(2, rts()); // illegal: a delayed branch in a delay slot
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        assertThrows(IllegalStateException.class, cpu::step);
+    }
+
+    @Test
+    void bsrThenRtsRoundTripsBackToTheCaller() {
+        // A tiny "call a subroutine and return" program:
+        //   0:  BSR +2         ; call the subroutine at address 8
+        //   2:  NOP            ; delay slot
+        //   4:  MOV #123,R0    ; runs after returning
+        //   6:  NOP            ; end marker
+        //   8:  MOV #1,R1      ; subroutine body
+        //   10: RTS            ; return to caller
+        //   12: NOP            ; delay slot
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bsr(2));       // target = 0 + 4 + 2*2 = 8
+        bus.writeInstruction(2, nop());
+        bus.writeInstruction(4, movImm(0, 123));
+        bus.writeInstruction(6, nop());
+        bus.writeInstruction(8, movImm(1, 1));
+        bus.writeInstruction(10, rts());       // returns to PR = 4
+        bus.writeInstruction(12, nop());
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        int steps = 0;
+        while (cpu.pc != 6) {
+            cpu.step();
+            steps++;
+            if (steps > 1000) {
+                throw new AssertionError("Program did not terminate — likely an infinite loop");
+            }
+        }
+
+        assertEquals(1, cpu.r[1], "the subroutine body must have run");
+        assertEquals(123, cpu.r[0], "execution must have resumed after the call, at the caller's next instruction");
+        // 4 calls to step(): BSR (which internally also runs its delay slot),
+        // MOV #1,R1, RTS (which internally also runs its delay slot), MOV #123,R0
+        assertEquals(4, steps);
     }
 }
