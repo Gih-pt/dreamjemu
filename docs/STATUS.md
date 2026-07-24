@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-24 (SH-4 interpreter: added BSR/JSR/RTS subroutine call/return, all with correct delay-slot semantics). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-24 (SH-4 interpreter: added JMP, MOV.B/MOV.W, NOT/NEG). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 
@@ -37,10 +37,16 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
   - `JSR` specifically reads its target register **before** the delay slot executes, matching real hardware — verified by a test where the delay slot instruction itself overwrites that register, confirming the interpreter uses the old value for the jump target while still executing the delay slot's effect.
   - Illegal-slot-instruction detection (a branch inside a delay slot) now also covers `BSR`/`JSR`/`RTS`, not just `BRA`.
   - 5 new JUnit tests, including a full "call a subroutine, run its body, return" round-trip integration test; 34 tests total in `core-cpu-sh4`.
+- [x] **`core-cpu-sh4`: added `JMP`, `MOV.B`/`MOV.W`, and `NOT`/`NEG`.**
+  - `JMP @Rn` — delayed unconditional jump through a register, reusing the same "read target before delay slot" discipline as `JSR`, but correctly does **not** touch `PR` (unlike `JSR`) — tested with a `PR` sentinel value to confirm.
+  - `MOV.B`/`MOV.W` load/store — byte and 16-bit word memory access (previously only `MOV.L`, 32-bit, existed), both sign-extending on load. Tested with values that would look wrong if sign-extension were missed.
+  - `NOT Rm,Rn` (bitwise complement) and `NEG Rm,Rn` (two's-complement negation).
+  - `RTE` (return from exception) is deliberately **not** implemented yet — it needs `SSR`/`SPC` (saved status register / saved PC) and real exception/interrupt-mode state that don't exist in this interpreter yet; implementing it now would just be a stub with no meaningful behavior. Tracked alongside MMU/exceptions in "not started yet" below.
+  - 7 new JUnit tests; 41 tests total in `core-cpu-sh4`.
 
 ### Not started yet
 
-- [ ] SH-4: the rest of the instruction set (logic/shift/subroutine calls now covered; still missing: `JMP`/`RTE`, MMU, caches, exceptions/interrupts, more addressing modes for MOV, multiply/divide), delay slots are handled for all currently-implemented delayed branches (`BRA`/`BSR`/`JSR`/`RTS`) and can be reused for `JMP`/`RTE`.
+- [ ] SH-4: the rest of the instruction set (logic/shift/subroutine calls/JMP/byte-word memory access now covered; still missing: `RTE` — needs SSR/SPC and exception-mode state, see above — MMU, caches, exceptions/interrupts, more addressing modes, multiply/divide), delay slots are handled for all currently-implemented delayed branches (`BRA`/`BSR`/`JSR`/`JMP`/`RTS`).
 - [ ] PowerVR2 GPU core.
 - [ ] AICA sound core.
 - [ ] Maple bus (controllers, VMU).
@@ -55,5 +61,5 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 ## Immediate recommended next steps
 
 1. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
-2. Start sketching the BIOS-free HLE boot sequence — the interpreter now has enough (arithmetic, memory access, branching, and subroutine calls) to express real control flow.
-3. Consider `JMP`/`RTE` next for `core-cpu-sh4` (same delay-slot pattern again), or pivot toward PowerVR2/AICA/Maple groundwork per `docs/ROADMAP.md` Phase 1.
+2. Start sketching the BIOS-free HLE boot sequence — the interpreter now has arithmetic, logic, memory access (byte/word/long), branching, and subroutine calls, enough to express real control flow.
+3. Pivot toward PowerVR2/AICA/Maple groundwork per `docs/ROADMAP.md` Phase 1, or continue growing `core-cpu-sh4` (multiply/divide, more addressing modes) as needed by whatever HLE/boot code gets written first.

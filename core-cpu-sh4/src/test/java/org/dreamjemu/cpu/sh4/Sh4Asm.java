@@ -114,4 +114,32 @@ final class Sh4Asm {
     static int rts() {
         return 0x000B;
     }
+
+    static int jmp(int n) {
+        return 0x402B | (n << 8);
+    }
+
+    static int movBStore(int n, int m) {
+        return 0x2000 | (n << 8) | (m << 4); // MOV.B Rm,@Rn
+    }
+
+    static int movBLoad(int n, int m) {
+        return 0x6000 | (n << 8) | (m << 4); // MOV.B @Rm,Rn
+    }
+
+    static int movWStore(int n, int m) {
+        return 0x2001 | (n << 8) | (m << 4); // MOV.W Rm,@Rn
+    }
+
+    static int movWLoad(int n, int m) {
+        return 0x6001 | (n << 8) | (m << 4); // MOV.W @Rm,Rn
+    }
+
+    static int notReg(int n, int m) {
+        return 0x6007 | (n << 8) | (m << 4); // NOT Rm,Rn
+    }
+
+    static int negReg(int n, int m) {
+        return 0x600B | (n << 8) | (m << 4); // NEG Rm,Rn
+    }
 }

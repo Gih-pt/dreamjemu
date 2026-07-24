@@ -12,12 +12,19 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.bsr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bt;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.jmp;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.jsr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBLoad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBStore;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movImm;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoad;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStore;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWLoad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWStore;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.negReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.nop;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.notReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
@@ -507,5 +514,75 @@ class Sh4CpuTest {
         // 4 calls to step(): BSR (which internally also runs its delay slot),
         // MOV #1,R1, RTS (which internally also runs its delay slot), MOV #123,R0
         assertEquals(4, steps);
+    }
+
+    @Test
+    void jmpReadsTargetRegisterBeforeDelaySlotRunsAndDoesNotTouchPr() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, jmp(1));         // JMP @R1
+        bus.writeInstruction(2, movImm(1, 50));  // delay slot: overwrites R1 itself
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 20;
+        cpu.pr = 999; // sentinel — JMP must not touch PR, unlike JSR
+
+        cpu.step();
+
+        assertEquals(20, cpu.pc, "the target must be R1's value at JMP time, not after the delay slot modified it");
+        assertEquals(50, cpu.r[1], "the delay slot instruction still executes");
+        assertEquals(999, cpu.pr, "JMP must not set PR (unlike JSR)");
+    }
+
+    @Test
+    void movBStoreThenLoadSignExtends() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movBStore(1, 0)); // MOV.B R0,@R1
+        bus.writeInstruction(2, movBLoad(2, 1));  // MOV.B @R1,R2
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0xFFFFFF80; // low byte 0x80 — negative once sign-extended
+        cpu.r[1] = 100;
+
+        cpu.step();
+        cpu.step();
+
+        assertEquals(0xFFFFFF80, cpu.r[2], "a stored 0x80 byte must load back sign-extended to 0xFFFFFF80");
+    }
+
+    @Test
+    void movWStoreThenLoadSignExtends() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWStore(1, 0)); // MOV.W R0,@R1
+        bus.writeInstruction(2, movWLoad(2, 1));  // MOV.W @R1,R2
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0xFFFF8000; // low word 0x8000 — negative once sign-extended
+        cpu.r[1] = 100;
+
+        cpu.step();
+        cpu.step();
+
+        assertEquals(0xFFFF8000, cpu.r[2], "a stored 0x8000 word must load back sign-extended to 0xFFFF8000");
+    }
+
+    @Test
+    void notComputesBitwiseComplement() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, notReg(1, 0)); // NOT R0,R1
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x0000FFFF;
+
+        cpu.step();
+
+        assertEquals(0xFFFF0000, cpu.r[1]);
+    }
+
+    @Test
+    void negComputesTwosComplementNegation() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, negReg(1, 0)); // NEG R0,R1
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 5;
+
+        cpu.step();
+
+        assertEquals(-5, cpu.r[1]);
     }
 }

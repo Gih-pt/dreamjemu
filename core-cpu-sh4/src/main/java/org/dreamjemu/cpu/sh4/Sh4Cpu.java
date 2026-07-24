@@ -141,6 +141,16 @@ public class Sh4Cpu {
             pc = target;
             return;
         }
+        if ((opcode & 0xF0FF) == 0x402B) {
+            // JMP @Rn — delayed unconditional jump through a register (no PR
+            // update, unlike JSR). The target register is read NOW, before
+            // the delay slot executes, in case the delay slot modifies Rn.
+            int n = (opcode >> 8) & 0xF;
+            int target = r[n];
+            executeDelaySlot(thisPc + 2);
+            pc = target;
+            return;
+        }
 
         pc = executeNonDelayedInstruction(thisPc, opcode);
     }
@@ -165,6 +175,7 @@ public class Sh4Cpu {
         return (opcode & 0xF000) == 0xA000   // BRA
                 || (opcode & 0xF000) == 0xB000  // BSR
                 || (opcode & 0xF0FF) == 0x400B  // JSR
+                || (opcode & 0xF0FF) == 0x402B  // JMP
                 || opcode == 0x000B             // RTS
                 || (opcode & 0xFF00) == 0x8900  // BT
                 || (opcode & 0xFF00) == 0x8B00; // BF
@@ -258,6 +269,26 @@ public class Sh4Cpu {
             // SHAR Rn — arithmetic shift right by 1 (sign-extending); T = bit shifted out (old LSB).
             setT((r[n] & 1) != 0);
             r[n] = r[n] >> 1;
+        } else if ((opcode & 0xF00F) == 0x2000) {
+            // MOV.B Rm,@Rn — store the low byte of Rm to the address held in Rn.
+            bus.write8(Integer.toUnsignedLong(r[n]), (byte) r[m]);
+        } else if ((opcode & 0xF00F) == 0x6000) {
+            // MOV.B @Rm,Rn — load a sign-extended byte from the address held in Rm.
+            // (bus.read8 returns a Java byte, which auto-sign-extends on assignment to int.)
+            r[n] = bus.read8(Integer.toUnsignedLong(r[m]));
+        } else if ((opcode & 0xF00F) == 0x2001) {
+            // MOV.W Rm,@Rn — store the low 16 bits of Rm to the address held in Rn.
+            bus.write16(Integer.toUnsignedLong(r[n]), (short) r[m]);
+        } else if ((opcode & 0xF00F) == 0x6001) {
+            // MOV.W @Rm,Rn — load a sign-extended 16-bit word from the address held in Rm.
+            // (bus.read16 returns a Java short, which auto-sign-extends on assignment to int.)
+            r[n] = bus.read16(Integer.toUnsignedLong(r[m]));
+        } else if ((opcode & 0xF00F) == 0x6007) {
+            // NOT Rm,Rn — Rn = bitwise complement of Rm.
+            r[n] = ~r[m];
+        } else if ((opcode & 0xF00F) == 0x600B) {
+            // NEG Rm,Rn — Rn = 0 - Rm (two's-complement negation).
+            r[n] = -r[m];
         } else {
             throw new UnsupportedOperationException(String.format(
                     "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));

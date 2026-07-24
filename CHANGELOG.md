@@ -6,6 +6,10 @@ All notable changes to this project should be documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Added — 2026-07-24 (JMP, MOV.B/MOV.W, NOT/NEG)
+- `core-cpu-sh4`: added `JMP @Rn` (delayed unconditional jump through a register, reusing `JSR`'s "read target before delay slot" discipline, but correctly not touching `PR` — tested with a `PR` sentinel), `MOV.B`/`MOV.W` load/store (byte and 16-bit word memory access, both sign-extending on load — previously only 32-bit `MOV.L` existed), and `NOT`/`NEG` (bitwise complement, two's-complement negation). `RTE` deliberately not implemented yet — it needs `SSR`/`SPC` and exception-mode state this interpreter doesn't model, so it's tracked alongside MMU/exceptions rather than stubbed out with no real behavior. 7 new JUnit tests; 41 tests total in `core-cpu-sh4`.
+- *AI assistance: yes — implemented with Claude (Anthropic), tested locally with a JDK-based manual verification harness in a sandbox (no Gradle/Maven Central access there); needs confirmation via `./gradlew :core-cpu-sh4:test` on a real machine.*
+
 ### Added — 2026-07-24 (BSR/JSR/RTS subroutine call/return)
 - `core-cpu-sh4`: added `BSR` (PC-relative subroutine call), `JSR` (register-indirect subroutine call), and `RTS` (return), reusing and extending the delay-slot mechanism already built for `BRA`. `BSR`/`JSR` set `PR` to the return address before running their delay slot; `RTS` jumps to `PR` after its own delay slot. `JSR` specifically reads its target register *before* the delay slot executes (matching real hardware) — tested with a delay slot that overwrites the target register itself, confirming the jump still uses the pre-delay-slot value while the delay slot's own effect is still visible. Illegal-slot-instruction detection now covers `BSR`/`JSR`/`RTS` too. 5 new JUnit tests, including a full call/return round-trip integration test; 34 tests total in `core-cpu-sh4`.
 - *AI assistance: yes — implemented with Claude (Anthropic), tested locally with a JDK-based manual verification harness in a sandbox (no Gradle/Maven Central access there); needs confirmation via `./gradlew :core-cpu-sh4:test` on a real machine.*
