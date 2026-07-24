@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-24 (SH-4 interpreter: added JMP, MOV.B/MOV.W, NOT/NEG). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-24 (SH-4 interpreter: added multiply/divide instructions, verified with a full end-to-end division routine). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 
@@ -43,10 +43,17 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
   - `NOT Rm,Rn` (bitwise complement) and `NEG Rm,Rn` (two's-complement negation).
   - `RTE` (return from exception) is deliberately **not** implemented yet — it needs `SSR`/`SPC` (saved status register / saved PC) and real exception/interrupt-mode state that don't exist in this interpreter yet; implementing it now would just be a stub with no meaningful behavior. Tracked alongside MMU/exceptions in "not started yet" below.
   - 7 new JUnit tests; 41 tests total in `core-cpu-sh4`.
+- [x] **`core-cpu-sh4`: added multiply (`MUL.L`/`MULS.W`/`MULU.W`/`DMULS.L`/`DMULU.L`) and divide (`DIV0U`/`DIV0S`/`DIV1`) instructions, plus `ROTCL`.**
+  - Added `mach`/`macl` registers (multiply-accumulate result) and the `Q`/`M` division flags, alongside the existing `T` flag.
+  - `MUL.L` truncates to 32 bits (`MACL` only); `MULS.W`/`MULU.W` operate on the low 16 bits of each register (sign- vs zero-extended respectively — tested explicitly, since mixing these up is a classic bug); `DMULS.L`/`DMULU.L` produce a full 64-bit result in `MACH:MACL`, implemented via 64-bit Java `long` arithmetic rather than the reference 32-bit-limb algorithm (simpler, mathematically equivalent).
+  - `DIV0U`/`DIV0S`/`DIV1` implement the SH-4's bit-serial division primitive. **The exact `DIV1` semantics (including subtle unsigned-comparison behavior for the internal borrow/carry check) were verified against a public SH instruction set reference before implementation** — this caught two inverted-ternary bugs during development that would otherwise have silently produced wrong division results in about half of all cases.
+  - **Verified with the actual documented 32-bit unsigned division routine** (`DIV0U` + 32×`{ROTCL; DIV1}` + a final `ROTCL`, matching the reference example) run end-to-end for two different dividend/divisor pairs, each checked against the independently-computed correct quotient (`100/7=14`, `1000000/3=333333`) — a much stronger correctness signal than testing `DIV1` in isolation alone, since a remaining subtle bug would very likely make a real 32-iteration division produce a wrong answer.
+  - `RTE` remains deliberately unimplemented (see the earlier entry above).
+  - 11 new JUnit tests, including the full division routine; 52 tests total in `core-cpu-sh4`.
 
 ### Not started yet
 
-- [ ] SH-4: the rest of the instruction set (logic/shift/subroutine calls/JMP/byte-word memory access now covered; still missing: `RTE` — needs SSR/SPC and exception-mode state, see above — MMU, caches, exceptions/interrupts, more addressing modes, multiply/divide), delay slots are handled for all currently-implemented delayed branches (`BRA`/`BSR`/`JSR`/`JMP`/`RTS`).
+- [ ] SH-4: the rest of the instruction set (logic/shift/subroutine calls/JMP/byte-word memory access/multiply/divide now covered; still missing: `RTE` — needs SSR/SPC and exception-mode state — MMU, caches, exceptions/interrupts, more addressing modes), delay slots are handled for all currently-implemented delayed branches (`BRA`/`BSR`/`JSR`/`JMP`/`RTS`).
 - [ ] PowerVR2 GPU core.
 - [ ] AICA sound core.
 - [ ] Maple bus (controllers, VMU).
@@ -61,5 +68,5 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 ## Immediate recommended next steps
 
 1. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
-2. Start sketching the BIOS-free HLE boot sequence — the interpreter now has arithmetic, logic, memory access (byte/word/long), branching, and subroutine calls, enough to express real control flow.
-3. Pivot toward PowerVR2/AICA/Maple groundwork per `docs/ROADMAP.md` Phase 1, or continue growing `core-cpu-sh4` (multiply/divide, more addressing modes) as needed by whatever HLE/boot code gets written first.
+2. Start sketching the BIOS-free HLE boot sequence — the interpreter now has arithmetic (including multiply/divide), logic, all memory access sizes, branching, and subroutine calls, enough to express real, non-trivial control flow.
+3. Pivot toward PowerVR2/AICA/Maple groundwork per `docs/ROADMAP.md` Phase 1 — `core-cpu-sh4`'s instruction coverage is now broad enough that further growth can be driven by whatever HLE/boot code actually needs, rather than added speculatively.

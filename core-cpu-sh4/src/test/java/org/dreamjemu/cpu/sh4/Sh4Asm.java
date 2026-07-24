@@ -142,4 +142,40 @@ final class Sh4Asm {
     static int negReg(int n, int m) {
         return 0x600B | (n << 8) | (m << 4); // NEG Rm,Rn
     }
+
+    static int mulL(int n, int m) {
+        return 0x0007 | (n << 8) | (m << 4); // MUL.L Rm,Rn
+    }
+
+    static int mulsW(int n, int m) {
+        return 0x200F | (n << 8) | (m << 4); // MULS.W Rm,Rn
+    }
+
+    static int muluW(int n, int m) {
+        return 0x200E | (n << 8) | (m << 4); // MULU.W Rm,Rn
+    }
+
+    static int dmulsL(int n, int m) {
+        return 0x300D | (n << 8) | (m << 4); // DMULS.L Rm,Rn
+    }
+
+    static int dmuluL(int n, int m) {
+        return 0x3005 | (n << 8) | (m << 4); // DMULU.L Rm,Rn
+    }
+
+    static int div0u() {
+        return 0x0019;
+    }
+
+    static int div0s(int n, int m) {
+        return 0x2007 | (n << 8) | (m << 4); // DIV0S Rm,Rn
+    }
+
+    static int div1(int n, int m) {
+        return 0x3004 | (n << 8) | (m << 4); // DIV1 Rm,Rn
+    }
+
+    static int rotcl(int n) {
+        return 0x4024 | (n << 8);
+    }
 }

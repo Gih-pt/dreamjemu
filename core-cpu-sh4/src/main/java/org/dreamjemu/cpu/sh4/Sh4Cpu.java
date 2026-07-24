@@ -64,8 +64,18 @@ public class Sh4Cpu {
     /** Procedure register (subroutine return address). Not yet written by any implemented instruction. */
     public int pr;
 
+    /** High 32 bits of the 64-bit multiply-accumulate result (DMULS.L/DMULU.L). Unused by MUL.L/MULS.W/MULU.W. */
+    public int mach;
+
+    /** Low 32 bits of the multiply result — the only part MUL.L/MULS.W/MULU.W write. */
+    public int macl;
+
     /** Status register. Only bit 0 (the T flag) is modeled so far. */
     private int sr;
+
+    /** Q and M flags, used only by the DIV0U/DIV0S/DIV1 bit-serial division sequence. */
+    private boolean qFlag;
+    private boolean mFlag;
 
     private final Bus bus;
 
@@ -80,6 +90,16 @@ public class Sh4Cpu {
 
     private void setT(boolean value) {
         sr = value ? (sr | 1) : (sr & ~1);
+    }
+
+    /** The Q flag, as left by the most recent DIV0U/DIV0S/DIV1. */
+    public boolean qFlag() {
+        return qFlag;
+    }
+
+    /** The M flag, as left by the most recent DIV0U/DIV0S. */
+    public boolean mFlag() {
+        return mFlag;
     }
 
     /** Current status register value, for tests/debug tooling. Only bit 0 is meaningful so far. */
@@ -269,6 +289,13 @@ public class Sh4Cpu {
             // SHAR Rn — arithmetic shift right by 1 (sign-extending); T = bit shifted out (old LSB).
             setT((r[n] & 1) != 0);
             r[n] = r[n] >> 1;
+        } else if ((opcode & 0xF0FF) == 0x4024) {
+            // ROTCL Rn — rotate left through T: new T = old MSB; Rn = (Rn<<1) | old T.
+            // Used together with DIV1 to fold each computed quotient bit into a
+            // separate accumulator register — see the DIV1 handling below.
+            boolean newT = (r[n] & 0x80000000) != 0;
+            r[n] = (r[n] << 1) | (tFlag() ? 1 : 0);
+            setT(newT);
         } else if ((opcode & 0xF00F) == 0x2000) {
             // MOV.B Rm,@Rn — store the low byte of Rm to the address held in Rn.
             bus.write8(Integer.toUnsignedLong(r[n]), (byte) r[m]);
@@ -289,6 +316,81 @@ public class Sh4Cpu {
         } else if ((opcode & 0xF00F) == 0x600B) {
             // NEG Rm,Rn — Rn = 0 - Rm (two's-complement negation).
             r[n] = -r[m];
+        } else if ((opcode & 0xF00F) == 0x0007) {
+            // MUL.L Rm,Rn — 32x32->32 multiply (truncated), result in MACL only.
+            macl = r[n] * r[m];
+        } else if ((opcode & 0xF00F) == 0x200F) {
+            // MULS.W Rm,Rn — signed 16x16->32 multiply (low 16 bits of each register,
+            // sign-extended), result in MACL only.
+            int rn16 = (short) r[n];
+            int rm16 = (short) r[m];
+            macl = rn16 * rm16;
+        } else if ((opcode & 0xF00F) == 0x200E) {
+            // MULU.W Rm,Rn — unsigned 16x16->32 multiply (low 16 bits of each register,
+            // zero-extended), result in MACL only.
+            int rn16 = r[n] & 0xFFFF;
+            int rm16 = r[m] & 0xFFFF;
+            macl = rn16 * rm16;
+        } else if ((opcode & 0xF00F) == 0x300D) {
+            // DMULS.L Rm,Rn — signed 32x32->64 multiply, result in MACH:MACL.
+            // Implemented with 64-bit Java long arithmetic rather than the reference
+            // 32-bit-limb algorithm — mathematically equivalent, much simpler/less error-prone.
+            long product = (long) r[n] * (long) r[m];
+            mach = (int) (product >>> 32);
+            macl = (int) product;
+        } else if ((opcode & 0xF00F) == 0x3005) {
+            // DMULU.L Rm,Rn — unsigned 32x32->64 multiply, result in MACH:MACL.
+            long product = Integer.toUnsignedLong(r[n]) * Integer.toUnsignedLong(r[m]);
+            mach = (int) (product >>> 32);
+            macl = (int) product;
+        } else if (opcode == 0x0019) {
+            // DIV0U — initializes the bit-serial unsigned division sequence: Q = M = T = 0.
+            qFlag = false;
+            mFlag = false;
+            setT(false);
+        } else if ((opcode & 0xF00F) == 0x2007) {
+            // DIV0S Rm,Rn — initializes the bit-serial signed division sequence:
+            // Q = sign of the dividend (Rn), M = sign of the divisor (Rm), T = (Q != M).
+            qFlag = (r[n] & 0x80000000) != 0;
+            mFlag = (r[m] & 0x80000000) != 0;
+            setT(qFlag != mFlag);
+        } else if ((opcode & 0xF00F) == 0x3004) {
+            // DIV1 Rm,Rn — one step of the bit-serial division algorithm; called 32 times
+            // (with a rotate instruction folding T into the running quotient bit-by-bit)
+            // to compute a full 32-bit division. See docs/ROADMAP.md — a full round-trip
+            // division test needs ROTCL, not implemented yet, so this is tested as a
+            // standalone primitive against hand-verified expected state instead.
+            boolean oldQ = qFlag;
+            qFlag = (r[n] & 0x80000000) != 0;
+            int divisor = r[m];
+            r[n] = (r[n] << 1) | (tFlag() ? 1 : 0);
+
+            if (!oldQ) {
+                if (!mFlag) {
+                    int before = r[n];
+                    r[n] = r[n] - divisor;
+                    boolean borrowed = Integer.compareUnsigned(r[n], before) > 0;
+                    qFlag = qFlag ? !borrowed : borrowed;
+                } else {
+                    int before = r[n];
+                    r[n] = r[n] + divisor;
+                    boolean carried = Integer.compareUnsigned(r[n], before) < 0;
+                    qFlag = qFlag ? carried : !carried;
+                }
+            } else {
+                if (!mFlag) {
+                    int before = r[n];
+                    r[n] = r[n] + divisor;
+                    boolean carried = Integer.compareUnsigned(r[n], before) < 0;
+                    qFlag = qFlag ? !carried : carried;
+                } else {
+                    int before = r[n];
+                    r[n] = r[n] - divisor;
+                    boolean borrowed = Integer.compareUnsigned(r[n], before) > 0;
+                    qFlag = qFlag ? borrowed : !borrowed;
+                }
+            }
+            setT(qFlag == mFlag);
         } else {
             throw new UnsupportedOperationException(String.format(
                     "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));
