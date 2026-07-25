@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-24 (SH-4 interpreter: added multiply/divide instructions, verified with a full end-to-end division routine). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-25 (core-gdrom: CUE/BIN sector reading implemented). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 
@@ -16,6 +16,15 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 - [x] CI verified on GitHub Actions: `build.yml` passes on `windows-latest`/`macos-latest`/`ubuntu-latest`. `nightly.yml`/`release.yml` invalid-YAML bug fixed and confirmed working.
 - [x] `core-system`: memory map and system bus implemented and tested (7 JUnit tests passing).
 - [x] `core-gdrom`: disc image format detection implemented and tested (8 JUnit tests) plus GDI parsing/sector reading implemented and tested (7 JUnit tests). 15 tests total in `core-gdrom`.
+- [x] **`core-gdrom`: CUE/BIN sector reading implemented.**
+  - `CueTrackMode`: the sector-size-bearing track modes seen in real CUE sheets (`AUDIO`, `MODE1/2048`, `MODE1/2352`, `MODE2/2048`, `MODE2/2336`, `MODE2/2352`), parsed case-insensitively from a TRACK line's mode token.
+  - `CueTrack`: a resolved track record — global start LBA, sector count, mode, and the `.bin` file name/byte offset where its data begins — analogous to `GdiTrack` but with the LBA and sector count *computed* rather than read directly, since CUE sheets don't declare either.
+  - `CueBinImage`: parses `FILE "name" BINARY` / `TRACK NN <mode>` / `INDEX 01 MM:SS:FF` lines (ignoring metadata-only lines like `REM`/`TITLE`/`PREGAP`/etc.), resolves `.bin` files relative to the `.cue` file's directory, and implements `readSector(long lba, byte[] dest)` following the exact same lazy-open-per-file pattern as `GdiImage`.
+  - A track's sector count is derived, not declared: the gap to the next track's `INDEX 01` within the same file (or the remaining bytes in the file, for the last track referencing it, divided by that track's sector size). Global LBA is the running total of every earlier track's sector count, so track 1 starts at LBA 0 — consistent with the whole-disc LBA numbering already used by `GdiImage`.
+  - **The exact `MM:SS:FF` → frame conversion (no 150-sector/2-second lead-in offset for CUE-sheet-relative indexes, unlike whole-disc absolute MSF addressing) was verified against public CUE sheet format documentation before implementation** (see the CHANGELOG entry for sources) — this confirmed the file-relative index value is directly usable as a sector count within its `FILE`, with no adjustment needed.
+  - Supports both common real-world layouts: multiple tracks sharing one `.bin` file, and one `.bin` file per track.
+  - Covers error cases: missing `INDEX 01`, a `TRACK` line before any `FILE` line, an unsupported `FILE` type (only `BINARY` is supported — no audio-file-based cue sheets), a malformed/unknown track mode, a missing referenced `.bin` file, and a file size that isn't a whole number of sectors for the mode declared.
+  - 10 new JUnit tests (`CueBinImageTest`); together with the existing 15, `core-gdrom` now has 25 tests. **Confirmed passing** with `./gradlew :core-gdrom:test` on a real machine (JDK 21, Gradle 8.7) — see the CHANGELOG entry, including a real parser bug the test run caught and fixed before this was true.
 - [x] `docs/DEPENDENCIES.md` added: every third-party dependency, its purpose, and GPLv3 license-compatibility check.
 - [x] `CONTRIBUTING.md` requires: mandatory AI-usage disclosure (yes/no) on every PR, keeping `docs/STATUS.md` / `docs/ROADMAP.md` / `CHANGELOG.md` current (with dates), and updating `docs/DEPENDENCIES.md` when dependencies change.
 - [x] `app-javafx`: native app-image packaging via `jpackage` — implemented AND verified working end-to-end (bundled Java runtime, native launcher, confirmed running standalone on Linux). Fixed a "JavaFX runtime components are missing" launcher issue along the way (see CHANGELOG).
@@ -57,7 +66,7 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 - [ ] PowerVR2 GPU core.
 - [ ] AICA sound core.
 - [ ] Maple bus (controllers, VMU).
-- [ ] CDI/CHD/CUE-BIN *reading* (only GDI reading exists so far; detection exists for all four formats).
+- [ ] CDI/CHD *reading* (GDI and CUE/BIN reading now exist; detection exists for all four formats).
 - [ ] BIOS-free boot strategy (HLE).
 - [ ] Vulkan rendering backend.
 - [ ] Signed installers (.msi/.dmg/.deb) — only the unsigned app-image exists so far.
@@ -67,6 +76,6 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 
 ## Immediate recommended next steps
 
-1. Extend disc reading to CUE/BIN using the same track-list-plus-sector-read approach as `GdiImage`.
+1. Extend disc reading to CDI and CHD — GDI and CUE/BIN reading are now both done, following the same track-list-plus-sector-read approach; CHD in particular will need a compressed-hunk-reading dependency (see `docs/DEPENDENCIES.md` before adding one).
 2. Start sketching the BIOS-free HLE boot sequence — the interpreter now has arithmetic (including multiply/divide), logic, all memory access sizes, branching, and subroutine calls, enough to express real, non-trivial control flow.
 3. Pivot toward PowerVR2/AICA/Maple groundwork per `docs/ROADMAP.md` Phase 1 — `core-cpu-sh4`'s instruction coverage is now broad enough that further growth can be driven by whatever HLE/boot code actually needs, rather than added speculatively.
