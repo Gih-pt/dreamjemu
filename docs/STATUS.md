@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-25 (core-gdrom: CUE/BIN sector reading implemented). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-25 (core-gdrom: CDI sector reading implemented; fixed a real CDI-detection bug). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 
@@ -25,6 +25,14 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
   - Supports both common real-world layouts: multiple tracks sharing one `.bin` file, and one `.bin` file per track.
   - Covers error cases: missing `INDEX 01`, a `TRACK` line before any `FILE` line, an unsupported `FILE` type (only `BINARY` is supported — no audio-file-based cue sheets), a malformed/unknown track mode, a missing referenced `.bin` file, and a file size that isn't a whole number of sectors for the mode declared.
   - 10 new JUnit tests (`CueBinImageTest`); together with the existing 15, `core-gdrom` now has 25 tests. **Confirmed passing** with `./gradlew :core-gdrom:test` on a real machine (JDK 21, Gradle 8.7) — see the CHANGELOG entry, including a real parser bug the test run caught and fixed before this was true.
+- [x] **`core-gdrom`: CDI (DiscJuggler) sector reading implemented.**
+  - `CdiTrackMode`: the three CDI track-mode codes (`CDDA`/audio, `DATA`/Mode 1, `MULTI`/Mode 2), each resolving to the sector size(s) its separate "sector size code" field allows (a mode/size-code pair is a fact pair, not a free combination — an invalid pair means a corrupt/unsupported image).
+  - `CdiTrack`: a resolved track — unlike `CueTrack`, nothing here is derived: CDI's header declares each track's global LBA and sector count directly.
+  - `CdiImage`: parses a CDI file's trailer (an 8-byte `{version, header_offset}` pair at the very end of the file), locates and parses its binary header (session count, then each session's track count and per-track records), and implements `readSector(long lba, byte[] dest)` — reading from the single monolithic `.cdi` file itself, since (unlike GDI/CUE) CDI doesn't reference separate track files.
+  - Supports CDI v2/v3/v3.5 (version markers `0x80000004`/`0x80000005`/`0x80000006`); v3.5's header offset is measured backward from the end of the file rather than forward from the start, and v3+ track records carry a few extra fields that v2 doesn't.
+  - Covers error cases: a file too short to hold the trailer, an unrecognized version marker, an invalid header offset, a missing/corrupt 20-byte track-start marker, and an invalid mode/sector-size-code combination.
+  - **Bug found and fixed in `DiscImageDetector` while implementing this**: `looksLikeCdi` was checking the file's actual last 4 bytes as the "version marker", but the real trailer is `{version(4 bytes), header_offset(4 bytes)}` in that order — meaning the true last 4 bytes are `header_offset` (an arbitrary file position), and the version marker is the 4 bytes *before* those. The existing `DiscImageDetectorTest` for CDI happened to pass anyway because it only ever wrote a 4-byte trailer, never a real 8-byte one. Fixed the detector to check the correct window, corrected the version constants to match the sourced reference (`0x80000004`/`0x80000005`/`0x80000006`, not `0x00000004`/`0x80000004`/`0x80000005`), fixed the existing test to build a real 8-byte trailer, and added a regression test that a header_offset value which happens to look like a version marker isn't misread as one.
+  - 9 new JUnit tests (`CdiImageTest`) plus 1 new regression test in `DiscImageDetectorTest`; `core-gdrom` now has 35 tests. **Not yet run against a real JDK/Gradle** — hand-traced against the test fixtures' expected byte offsets instead (see the CHANGELOG entry); needs a real `./gradlew :core-gdrom:test` run before being considered validated, same as the CUE/BIN work needed until it got one.
 - [x] `docs/DEPENDENCIES.md` added: every third-party dependency, its purpose, and GPLv3 license-compatibility check.
 - [x] `CONTRIBUTING.md` requires: mandatory AI-usage disclosure (yes/no) on every PR, keeping `docs/STATUS.md` / `docs/ROADMAP.md` / `CHANGELOG.md` current (with dates), and updating `docs/DEPENDENCIES.md` when dependencies change.
 - [x] `app-javafx`: native app-image packaging via `jpackage` — implemented AND verified working end-to-end (bundled Java runtime, native launcher, confirmed running standalone on Linux). Fixed a "JavaFX runtime components are missing" launcher issue along the way (see CHANGELOG).
@@ -66,7 +74,7 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 - [ ] PowerVR2 GPU core.
 - [ ] AICA sound core.
 - [ ] Maple bus (controllers, VMU).
-- [ ] CDI/CHD *reading* (GDI and CUE/BIN reading now exist; detection exists for all four formats).
+- [ ] CHD *reading* (GDI, CUE/BIN, and CDI reading now exist; detection exists for all four formats).
 - [ ] BIOS-free boot strategy (HLE).
 - [ ] Vulkan rendering backend.
 - [ ] Signed installers (.msi/.dmg/.deb) — only the unsigned app-image exists so far.
@@ -76,6 +84,7 @@ Real emulation infrastructure now spans four areas: the system memory bus, Dream
 
 ## Immediate recommended next steps
 
-1. Extend disc reading to CDI and CHD — GDI and CUE/BIN reading are now both done, following the same track-list-plus-sector-read approach; CHD in particular will need a compressed-hunk-reading dependency (see `docs/DEPENDENCIES.md` before adding one).
-2. Start sketching the BIOS-free HLE boot sequence — the interpreter now has arithmetic (including multiply/divide), logic, all memory access sizes, branching, and subroutine calls, enough to express real, non-trivial control flow.
-3. Pivot toward PowerVR2/AICA/Maple groundwork per `docs/ROADMAP.md` Phase 1 — `core-cpu-sh4`'s instruction coverage is now broad enough that further growth can be driven by whatever HLE/boot code actually needs, rather than added speculatively.
+1. Extend disc reading to CHD — GDI, CUE/BIN, and CDI reading are all done now; CHD will need a compressed-hunk-reading dependency (see `docs/DEPENDENCIES.md` before adding one), which makes it a step up in complexity from the other three.
+2. Get a real `./gradlew :core-gdrom:test` run on a machine with a JDK to confirm the new `CdiImageTest` suite and the `DiscImageDetector` CDI-trailer bugfix (only hand-traced in the sandbox that produced them — see the CHANGELOG entry).
+3. Start sketching the BIOS-free HLE boot sequence — the interpreter now has arithmetic (including multiply/divide), logic, all memory access sizes, branching, and subroutine calls, enough to express real, non-trivial control flow.
+4. Pivot toward PowerVR2/AICA/Maple groundwork per `docs/ROADMAP.md` Phase 1 — `core-cpu-sh4`'s instruction coverage is now broad enough that further growth can be driven by whatever HLE/boot code actually needs, rather than added speculatively.

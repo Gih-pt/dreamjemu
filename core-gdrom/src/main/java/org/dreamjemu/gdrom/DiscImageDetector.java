@@ -30,13 +30,22 @@ public final class DiscImageDetector {
     private static final byte[] CHD_MAGIC = "MComprHD".getBytes(StandardCharsets.US_ASCII);
 
     /**
-     * DiscJuggler CDI images end with a 4-byte little-endian version marker.
-     * Known values (v2/v3/v3.5) are 0x00000004, 0x80000004, and 0x80000005.
-     * This is a widely documented structural fact about the CDI container
-     * format (used across the open-source disc-imaging/emulation community),
-     * not anything extracted from copyrighted Sega material.
+     * DiscJuggler CDI images end with an 8-byte little-endian trailer:
+     * {@code uint32 version; uint32 header_offset;} — so the version marker
+     * sits 8 bytes from the end of the file, and the true last 4 bytes are
+     * {@code header_offset} (a file-position value, not a magic constant).
+     * Known version values are 0x80000004 (v2), 0x80000005 (v3), and
+     * 0x80000006 (v3.5). This is a widely documented structural fact about
+     * the CDI container format (used across the open-source disc-imaging/
+     * emulation community — e.g. DreamShell's {@code isofs/cdi.h}), not
+     * anything extracted from copyrighted Sega material.
+     *
+     * <p>Corrected 2026-07-25: this previously checked the last 4 bytes of
+     * the file (which are actually {@code header_offset}, an arbitrary
+     * value) instead of the 4 bytes before them (the real {@code version}
+     * field) — see CHANGELOG.md.
      */
-    private static final long[] CDI_TRAILER_MAGICS = {0x00000004L, 0x80000004L, 0x80000005L};
+    private static final long[] CDI_TRAILER_MAGICS = {0x80000004L, 0x80000005L, 0x80000006L};
 
     private DiscImageDetector() {
     }
@@ -138,14 +147,19 @@ public final class DiscImageDetector {
         return header != null && java.util.Arrays.equals(header, CHD_MAGIC);
     }
 
-    /** CDI files end with a small trailer whose last 4 bytes are a known version marker. */
+    /**
+     * CDI files end with an 8-byte trailer ({@code version}, then
+     * {@code header_offset}); the version marker we check against known
+     * values is the 4 bytes at {@code fileSize - 8}, not the file's actual
+     * last 4 bytes (those are {@code header_offset}, a file position).
+     */
     static boolean looksLikeCdi(Path path) {
         try {
             long fileSize = Files.size(path);
-            if (fileSize < 4) {
+            if (fileSize < 8) {
                 return false;
             }
-            byte[] trailer = readBytes(path, fileSize - 4, 4);
+            byte[] trailer = readBytes(path, fileSize - 8, 4);
             if (trailer == null) {
                 return false;
             }

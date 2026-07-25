@@ -57,11 +57,29 @@ class DiscImageDetectorTest {
         Path file = tempDir.resolve("game.cdi");
         try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "rw")) {
             raf.write(new byte[256]); // arbitrary body content
-            // little-endian 0x80000004 trailer marker (a real DiscJuggler v3 version marker)
+            // 8-byte trailer: little-endian version (0x80000004, a real DiscJuggler
+            // v3 marker) followed by header_offset (arbitrary here, e.g. 256).
             raf.write(new byte[]{0x04, 0x00, 0x00, (byte) 0x80});
+            raf.write(new byte[]{0x00, 0x01, 0x00, 0x00});
         }
 
         assertEquals(DiscImageFormat.CDI, DiscImageDetector.detect(file));
+    }
+
+    @Test
+    void doesNotMistakeHeaderOffsetForVersionMarker() throws IOException {
+        // Regression test: the CDI trailer is version(4 bytes) + header_offset(4
+        // bytes), in that order — so the file's true last 4 bytes are header_offset,
+        // an arbitrary file position, not a version constant. A header_offset value
+        // that happens to look like 0x80000004 must not be misread as the version.
+        Path file = tempDir.resolve("tricky.cdi");
+        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "rw")) {
+            raf.write(new byte[256]);
+            raf.write(new byte[]{0x11, 0x11, 0x11, 0x11}); // not a real version value
+            raf.write(new byte[]{0x04, 0x00, 0x00, (byte) 0x80}); // header_offset that looks like a version marker
+        }
+
+        assertEquals(DiscImageFormat.UNKNOWN, DiscImageDetector.detect(file));
     }
 
     @Test
