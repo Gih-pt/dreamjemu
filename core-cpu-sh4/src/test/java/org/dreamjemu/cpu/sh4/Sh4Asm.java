@@ -178,4 +178,88 @@ final class Sh4Asm {
     static int rotcl(int n) {
         return 0x4024 | (n << 8);
     }
+
+    static int movBLoadPostInc(int n, int m) {
+        return 0x6004 | (n << 8) | (m << 4); // MOV.B @Rm+,Rn
+    }
+
+    static int movWLoadPostInc(int n, int m) {
+        return 0x6005 | (n << 8) | (m << 4); // MOV.W @Rm+,Rn
+    }
+
+    static int movLLoadPostInc(int n, int m) {
+        return 0x6006 | (n << 8) | (m << 4); // MOV.L @Rm+,Rn
+    }
+
+    static int movBStorePreDec(int n, int m) {
+        return 0x2004 | (n << 8) | (m << 4); // MOV.B Rm,@-Rn
+    }
+
+    static int movWStorePreDec(int n, int m) {
+        return 0x2005 | (n << 8) | (m << 4); // MOV.W Rm,@-Rn
+    }
+
+    static int movLStorePreDec(int n, int m) {
+        return 0x2006 | (n << 8) | (m << 4); // MOV.L Rm,@-Rn
+    }
+
+    static int movBLoadIndexed(int n, int m) {
+        return 0x000C | (n << 8) | (m << 4); // MOV.B @(R0,Rm),Rn
+    }
+
+    static int movWLoadIndexed(int n, int m) {
+        return 0x000D | (n << 8) | (m << 4); // MOV.W @(R0,Rm),Rn
+    }
+
+    static int movLLoadIndexed(int n, int m) {
+        return 0x000E | (n << 8) | (m << 4); // MOV.L @(R0,Rm),Rn
+    }
+
+    static int movBStoreIndexed(int n, int m) {
+        return 0x0004 | (n << 8) | (m << 4); // MOV.B Rm,@(R0,Rn)
+    }
+
+    static int movWStoreIndexed(int n, int m) {
+        return 0x0005 | (n << 8) | (m << 4); // MOV.W Rm,@(R0,Rn)
+    }
+
+    static int movLStoreIndexed(int n, int m) {
+        return 0x0006 | (n << 8) | (m << 4); // MOV.L Rm,@(R0,Rn)
+    }
+
+    static int movBLoadDisp4(int m, int disp4) {
+        return 0x8400 | (m << 4) | (disp4 & 0xF); // MOV.B @(disp,Rm),R0
+    }
+
+    static int movWLoadDisp4(int m, int disp4) {
+        return 0x8500 | (m << 4) | (disp4 & 0xF); // MOV.W @(disp,Rm),R0
+    }
+
+    static int movLLoadDisp4(int n, int m, int disp4) {
+        return 0x5000 | (n << 8) | (m << 4) | (disp4 & 0xF); // MOV.L @(disp,Rm),Rn
+    }
+
+    static int movBStoreDisp4(int n, int disp4) {
+        return 0x8000 | (n << 4) | (disp4 & 0xF); // MOV.B R0,@(disp,Rn)
+    }
+
+    static int movWStoreDisp4(int n, int disp4) {
+        return 0x8100 | (n << 4) | (disp4 & 0xF); // MOV.W R0,@(disp,Rn)
+    }
+
+    static int movLStoreDisp4(int n, int m, int disp4) {
+        return 0x1000 | (n << 8) | (m << 4) | (disp4 & 0xF); // MOV.L Rm,@(disp,Rn)
+    }
+
+    static int movWLoadPcRel(int n, int disp8) {
+        return 0x9000 | (n << 8) | (disp8 & 0xFF); // MOV.W @(disp,PC),Rn
+    }
+
+    static int movLLoadPcRel(int n, int disp8) {
+        return 0xD000 | (n << 8) | (disp8 & 0xFF); // MOV.L @(disp,PC),Rn
+    }
+
+    static int mova(int disp8) {
+        return 0xC700 | (disp8 & 0xFF); // MOVA @(disp,PC),R0
+    }
 }

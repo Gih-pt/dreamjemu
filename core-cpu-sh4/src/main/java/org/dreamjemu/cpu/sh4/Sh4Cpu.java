@@ -310,6 +310,116 @@ public class Sh4Cpu {
             // MOV.W @Rm,Rn — load a sign-extended 16-bit word from the address held in Rm.
             // (bus.read16 returns a Java short, which auto-sign-extends on assignment to int.)
             r[n] = bus.read16(Integer.toUnsignedLong(r[m]));
+        } else if ((opcode & 0xF00F) == 0x6004) {
+            // MOV.B @Rm+,Rn — post-increment load: sign-extended byte from @Rm, then Rm += 1.
+            // Per the SH-4 spec, if Rn==Rm the increment is SKIPPED (the load overwrites Rm's
+            // old value anyway, so hardware doesn't also apply the increment on top of it) —
+            // tested explicitly, since assuming "always increment" would silently produce the
+            // wrong result in exactly that case.
+            r[n] = bus.read8(Integer.toUnsignedLong(r[m]));
+            if (n != m) {
+                r[m] += 1;
+            }
+        } else if ((opcode & 0xF00F) == 0x6005) {
+            // MOV.W @Rm+,Rn — same as above, a sign-extended 16-bit word; Rm += 2 (skipped if n==m).
+            r[n] = bus.read16(Integer.toUnsignedLong(r[m]));
+            if (n != m) {
+                r[m] += 2;
+            }
+        } else if ((opcode & 0xF00F) == 0x6006) {
+            // MOV.L @Rm+,Rn — same as above, a full 32-bit word; Rm += 4 (skipped if n==m).
+            // This is the SH-4's "pop" idiom when Rm is R15 (the stack pointer convention).
+            r[n] = bus.read32(Integer.toUnsignedLong(r[m]));
+            if (n != m) {
+                r[m] += 4;
+            }
+        } else if ((opcode & 0xF00F) == 0x2004) {
+            // MOV.B Rm,@-Rn — pre-decrement store: Rn -= 1 FIRST, then Rm's low byte is
+            // written at the new (decremented) Rn. Unlike the post-increment loads above,
+            // there is no n==m special case here — the decrement always happens.
+            r[n] -= 1;
+            bus.write8(Integer.toUnsignedLong(r[n]), (byte) r[m]);
+        } else if ((opcode & 0xF00F) == 0x2005) {
+            // MOV.W Rm,@-Rn — same as above; Rn -= 2 first.
+            r[n] -= 2;
+            bus.write16(Integer.toUnsignedLong(r[n]), (short) r[m]);
+        } else if ((opcode & 0xF00F) == 0x2006) {
+            // MOV.L Rm,@-Rn — same as above; Rn -= 4 first. This is the SH-4's "push" idiom
+            // when Rn is R15 (e.g. MOV.L Rm,@-R15 pushes Rm onto the stack).
+            r[n] -= 4;
+            bus.write32(Integer.toUnsignedLong(r[n]), r[m]);
+        } else if ((opcode & 0xF00F) == 0x000C) {
+            // MOV.B @(R0,Rm),Rn — indexed load: effective address = Rm + R0.
+            r[n] = bus.read8(Integer.toUnsignedLong(r[m] + r[0]));
+        } else if ((opcode & 0xF00F) == 0x000D) {
+            // MOV.W @(R0,Rm),Rn — indexed load, sign-extended 16-bit.
+            r[n] = bus.read16(Integer.toUnsignedLong(r[m] + r[0]));
+        } else if ((opcode & 0xF00F) == 0x000E) {
+            // MOV.L @(R0,Rm),Rn — indexed load, full 32-bit.
+            r[n] = bus.read32(Integer.toUnsignedLong(r[m] + r[0]));
+        } else if ((opcode & 0xF00F) == 0x0004) {
+            // MOV.B Rm,@(R0,Rn) — indexed store: effective address = Rn + R0.
+            bus.write8(Integer.toUnsignedLong(r[n] + r[0]), (byte) r[m]);
+        } else if ((opcode & 0xF00F) == 0x0005) {
+            // MOV.W Rm,@(R0,Rn) — indexed store, 16-bit.
+            bus.write16(Integer.toUnsignedLong(r[n] + r[0]), (short) r[m]);
+        } else if ((opcode & 0xF00F) == 0x0006) {
+            // MOV.L Rm,@(R0,Rn) — indexed store, 32-bit.
+            bus.write32(Integer.toUnsignedLong(r[n] + r[0]), r[m]);
+        } else if ((opcode & 0xFF00) == 0x8400) {
+            // MOV.B @(disp,Rm),R0 — 4-bit-displacement load, R0-only. disp4 is zero-extended
+            // and NOT scaled (byte access), so it reaches +0..+15 bytes from Rm.
+            int disp4 = opcode & 0xF;
+            r[0] = bus.read8(Integer.toUnsignedLong(r[m] + disp4));
+        } else if ((opcode & 0xFF00) == 0x8500) {
+            // MOV.W @(disp,Rm),R0 — same, but disp4 is doubled (word access), reaching +0..+30 bytes.
+            int disp4 = opcode & 0xF;
+            r[0] = bus.read16(Integer.toUnsignedLong(r[m] + disp4 * 2));
+        } else if ((opcode & 0xF000) == 0x5000) {
+            // MOV.L @(disp,Rm),Rn — 4-bit-displacement load, but (unlike the B/W forms above)
+            // Rn is a general register, not just R0. disp4 is quadrupled (longword access),
+            // reaching +0..+60 bytes — ideal for reading a nearby struct field.
+            int disp4 = opcode & 0xF;
+            r[n] = bus.read32(Integer.toUnsignedLong(r[m] + disp4 * 4));
+        } else if ((opcode & 0xFF00) == 0x8000) {
+            // MOV.B R0,@(disp,Rn) — displacement store (disp4, NOT scaled), R0 only.
+            // NOTE: this encoding ("10000000nnnndddd") puts its one register field at
+            // bits 4-7 — the same bit position as this method's "m" variable, NOT "n"
+            // (bits 8-11, which are always 0000 here) — easy to get backwards since the
+            // spec calls that field "Rn"; what matters is the bit position, not the name.
+            int disp4 = opcode & 0xF;
+            bus.write8(Integer.toUnsignedLong(r[m] + disp4), (byte) r[0]);
+        } else if ((opcode & 0xFF00) == 0x8100) {
+            // MOV.W R0,@(disp,Rn) — same bit-position note as above; disp4 doubled.
+            int disp4 = opcode & 0xF;
+            bus.write16(Integer.toUnsignedLong(r[m] + disp4 * 2), (short) r[0]);
+        } else if ((opcode & 0xF000) == 0x1000) {
+            // MOV.L Rm,@(disp,Rn) — 4-bit-displacement store, general source register,
+            // disp4 quadrupled — the store counterpart of the 0x5000 load above.
+            int disp4 = opcode & 0xF;
+            bus.write32(Integer.toUnsignedLong(r[n] + disp4 * 4), r[m]);
+        } else if ((opcode & 0xF000) == 0x9000) {
+            // MOV.W @(disp,PC),Rn — PC-relative word load, sign-extended. The 8-bit
+            // displacement is zero-extended then doubled; address = thisPc + 4 + disp*2,
+            // using THIS instruction's own address (not an already-incremented PC).
+            int disp8 = opcode & 0xFF;
+            r[n] = bus.read16(Integer.toUnsignedLong(thisPc + 4 + disp8 * 2));
+        } else if ((opcode & 0xF000) == 0xD000) {
+            // MOV.L @(disp,PC),Rn — PC-relative longword load: the standard way to load a
+            // full 32-bit constant, since MOV #imm,Rn only has an 8-bit sign-extended
+            // immediate. The 8-bit displacement is zero-extended then quadrupled, and — per
+            // the SH-4 spec — the PC value has its low 2 bits masked off FIRST, since the
+            // literal pool this addresses is always longword-aligned regardless of whether
+            // this instruction itself sits at a 2-mod-4 address.
+            int disp8 = opcode & 0xFF;
+            r[n] = bus.read32(Integer.toUnsignedLong((thisPc & ~3) + 4 + disp8 * 4));
+        } else if ((opcode & 0xFF00) == 0xC700) {
+            // MOVA @(disp,PC),R0 — like MOV.L @(disp,PC) above, but loads the EFFECTIVE
+            // ADDRESS itself into R0 rather than the data stored there — the standard way to
+            // get the address of a literal/string embedded in the code stream. Same
+            // PC-masking rule as MOV.L @(disp,PC),Rn.
+            int disp8 = opcode & 0xFF;
+            r[0] = (thisPc & ~3) + 4 + disp8 * 4;
         } else if ((opcode & 0xF00F) == 0x6007) {
             // NOT Rm,Rn — Rn = bitwise complement of Rm.
             r[n] = ~r[m];

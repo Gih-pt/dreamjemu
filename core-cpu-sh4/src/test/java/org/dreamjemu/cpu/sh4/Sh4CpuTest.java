@@ -19,14 +19,35 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.dmulsL;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.dmuluL;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.jmp;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.jsr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.mova;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movBLoad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBLoadDisp4;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBLoadIndexed;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBLoadPostInc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movBStore;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBStoreDisp4;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBStoreIndexed;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movBStorePreDec;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movImm;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoadDisp4;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoadIndexed;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoadPcRel;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLLoadPostInc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStore;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStoreDisp4;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStoreIndexed;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movLStorePreDec;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movWLoad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWLoadDisp4;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWLoadIndexed;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWLoadPcRel;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWLoadPostInc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.movWStore;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWStoreDisp4;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWStoreIndexed;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movWStorePreDec;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.mulL;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.mulsW;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.muluW;
@@ -762,6 +783,353 @@ class Sh4CpuTest {
         }
 
         assertEquals(dividend / divisor, cpu.r[2]);
+    }
+
+    // ---- Post-increment / pre-decrement addressing ----------------------
+
+    @Test
+    void movBLoadPostIncSignExtendsAndIncrementsRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movBLoadPostInc(2, 1)); // MOV.B @R1+,R2
+        bus.write8(50, (byte) 0xFF);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 50;
+
+        cpu.step();
+
+        assertEquals(-1, cpu.r[2], "0xFF should sign-extend to -1");
+        assertEquals(51, cpu.r[1], "Rm should be incremented by 1 after a byte load");
+    }
+
+    @Test
+    void movWLoadPostIncSignExtendsAndIncrementsRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWLoadPostInc(2, 1)); // MOV.W @R1+,R2
+        bus.write16(60, (short) 0x8000);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 60;
+
+        cpu.step();
+
+        assertEquals(0xFFFF8000, cpu.r[2], "0x8000 should sign-extend to a negative 32-bit value");
+        assertEquals(62, cpu.r[1], "Rm should be incremented by 2 after a word load");
+    }
+
+    @Test
+    void movLLoadPostIncIncrementsRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLLoadPostInc(2, 1)); // MOV.L @R1+,R2
+        bus.write32(70, 0x12345678);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 70;
+
+        cpu.step();
+
+        assertEquals(0x12345678, cpu.r[2]);
+        assertEquals(74, cpu.r[1], "Rm should be incremented by 4 after a longword load");
+    }
+
+    @Test
+    void movLLoadPostIncSkipsIncrementWhenRnEqualsRm() {
+        // Per the SH-4 spec: "if (n != m) R[m] += 4;" — when the destination and the
+        // address register are the same, the increment must NOT also apply on top of
+        // the loaded value overwriting it.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLLoadPostInc(3, 3)); // MOV.L @R3+,R3
+        bus.write32(80, 0x11223344);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[3] = 80;
+
+        cpu.step();
+
+        assertEquals(0x11223344, cpu.r[3], "R3 should hold the loaded value, not the incremented address");
+    }
+
+    @Test
+    void movBStorePreDecDecrementsThenStores() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movBStorePreDec(1, 2)); // MOV.B R2,@-R1
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+        cpu.r[2] = 0xEF;
+
+        cpu.step();
+
+        assertEquals(99, cpu.r[1], "Rn should be decremented by 1 before the store");
+        assertEquals((byte) 0xEF, bus.read8(99));
+    }
+
+    @Test
+    void movWStorePreDecDecrementsThenStores() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWStorePreDec(1, 2)); // MOV.W R2,@-R1
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+        cpu.r[2] = 0x1234;
+
+        cpu.step();
+
+        assertEquals(98, cpu.r[1], "Rn should be decremented by 2 before the store");
+        assertEquals((short) 0x1234, bus.read16(98));
+    }
+
+    @Test
+    void movLStorePreDecDecrementsThenStores() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLStorePreDec(1, 2)); // MOV.L R2,@-R1
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+        cpu.r[2] = 0x12345678;
+
+        cpu.step();
+
+        assertEquals(96, cpu.r[1], "Rn should be decremented by 4 before the store");
+        assertEquals(0x12345678, bus.read32(96));
+    }
+
+    @Test
+    void movLPushThenPopRoundTrips() {
+        // The SH-4's push/pop idiom: MOV.L Rm,@-R15 (push) paired with MOV.L @R15+,Rn (pop).
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLStorePreDec(15, 0)); // MOV.L R0,@-R15  (push R0)
+        bus.writeInstruction(2, movLLoadPostInc(1, 15)); // MOV.L @R15+,R1 (pop into R1)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 200;
+        cpu.r[0] = 0x12345678;
+
+        cpu.step(); // push
+        assertEquals(196, cpu.r[15], "stack pointer should have moved down by 4 after the push");
+
+        cpu.step(); // pop
+        assertEquals(0x12345678, cpu.r[1], "the popped value should match what was pushed");
+        assertEquals(200, cpu.r[15], "stack pointer should be back to its original value after the pop");
+    }
+
+    // ---- Indexed (R0-based) addressing -----------------------------------
+
+    @Test
+    void movBLoadIndexedUsesR0PlusRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movBLoadIndexed(2, 1)); // MOV.B @(R0,R1),R2
+        bus.write8(105, (byte) 0xFE);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 5;
+        cpu.r[1] = 100;
+
+        cpu.step();
+
+        assertEquals(-2, cpu.r[2], "0xFE should sign-extend to -2");
+    }
+
+    @Test
+    void movWLoadIndexedUsesR0PlusRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWLoadIndexed(2, 1)); // MOV.W @(R0,R1),R2
+        bus.write16(105, (short) 0x00AB);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 5;
+        cpu.r[1] = 100;
+
+        cpu.step();
+
+        assertEquals(0x00AB, cpu.r[2]);
+    }
+
+    @Test
+    void movLLoadIndexedUsesR0PlusRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLLoadIndexed(2, 1)); // MOV.L @(R0,R1),R2
+        bus.write32(104, 0x0BADF00D);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 4;
+        cpu.r[1] = 100;
+
+        cpu.step();
+
+        assertEquals(0x0BADF00D, cpu.r[2]);
+    }
+
+    @Test
+    void movBStoreIndexedUsesR0PlusRn() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movBStoreIndexed(1, 2)); // MOV.B R2,@(R0,R1)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 5;
+        cpu.r[1] = 100;
+        cpu.r[2] = 0x7A;
+
+        cpu.step();
+
+        assertEquals((byte) 0x7A, bus.read8(105));
+    }
+
+    @Test
+    void movWStoreIndexedUsesR0PlusRn() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWStoreIndexed(1, 2)); // MOV.W R2,@(R0,R1)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 5;
+        cpu.r[1] = 100;
+        cpu.r[2] = 0x5678;
+
+        cpu.step();
+
+        assertEquals((short) 0x5678, bus.read16(105));
+    }
+
+    @Test
+    void movLStoreIndexedUsesR0PlusRn() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLStoreIndexed(1, 2)); // MOV.L R2,@(R0,R1)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 4;
+        cpu.r[1] = 100;
+        cpu.r[2] = 0x0BADF00D;
+
+        cpu.step();
+
+        assertEquals(0x0BADF00D, bus.read32(104));
+    }
+
+    // ---- 4-bit displacement addressing -----------------------------------
+
+    @Test
+    void movBLoadDisp4IsNotScaled() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movBLoadDisp4(1, 5)); // MOV.B @(5,R1),R0
+        bus.write8(105, (byte) 0xFD);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+
+        cpu.step();
+
+        assertEquals(-3, cpu.r[0], "0xFD should sign-extend to -3; disp=5 should mean +5 bytes, not scaled");
+    }
+
+    @Test
+    void movWLoadDisp4IsScaledByTwo() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWLoadDisp4(1, 5)); // MOV.W @(5,R1),R0 -> byte offset 10
+        bus.write16(110, (short) 0x00CD);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+
+        cpu.step();
+
+        assertEquals(0x00CD, cpu.r[0]);
+    }
+
+    @Test
+    void movLLoadDisp4IsScaledByFour() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLLoadDisp4(3, 1, 5)); // MOV.L @(5,R1),R3 -> byte offset 20
+        bus.write32(120, 0x0BADF00D);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+
+        cpu.step();
+
+        assertEquals(0x0BADF00D, cpu.r[3]);
+    }
+
+    @Test
+    void movBStoreDisp4IsNotScaled() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movBStoreDisp4(1, 5)); // MOV.B R0,@(5,R1)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+        cpu.r[0] = 0x9A;
+
+        cpu.step();
+
+        assertEquals((byte) 0x9A, bus.read8(105));
+    }
+
+    @Test
+    void movWStoreDisp4IsScaledByTwo() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWStoreDisp4(1, 5)); // MOV.W R0,@(5,R1) -> byte offset 10
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+        cpu.r[0] = 0x4321;
+
+        cpu.step();
+
+        assertEquals((short) 0x4321, bus.read16(110));
+    }
+
+    @Test
+    void movLStoreDisp4IsScaledByFour() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLStoreDisp4(1, 2, 5)); // MOV.L R2,@(5,R1) -> byte offset 20
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 100;
+        cpu.r[2] = 0x0BADF00D;
+
+        cpu.step();
+
+        assertEquals(0x0BADF00D, bus.read32(120));
+    }
+
+    // ---- PC-relative addressing --------------------------------------
+
+    @Test
+    void movWLoadPcRelSignExtends() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movWLoadPcRel(3, 2)); // MOV.W @(2,PC),R3 -> address 0+4+2*2=8
+        bus.write16(8, (short) 0x8001);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step();
+
+        assertEquals(0xFFFF8001, cpu.r[3], "0x8001 should sign-extend to a negative 32-bit value");
+    }
+
+    @Test
+    void movLLoadPcRelLoadsConstant() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movLLoadPcRel(4, 2)); // MOV.L @(2,PC),R4 -> address (0&~3)+4+2*4=12
+        bus.write32(12, 0x11223344);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step();
+
+        assertEquals(0x11223344, cpu.r[4]);
+    }
+
+    @Test
+    void movLLoadPcRelMasksLowPcBitsWhenInstructionIsNotLongwordAligned() {
+        // Per the SH-4 spec, the PC value used is masked to a longword boundary
+        // FIRST (PC & 0xFFFFFFFC), THEN 4 is added — regardless of whether this
+        // instruction itself sits at a 4-aligned address. Placing the instruction
+        // at address 2 (2 mod 4, not longword-aligned) means the masked target is
+        // address 4, while an unmasked "PC+4" calculation would wrongly read from
+        // address 6 instead. NOTE: those two 4-byte read windows ([4,8) and [6,10))
+        // overlap by 2 bytes, so writing a second, different sentinel at address 6
+        // would corrupt the one at address 4 — instead this relies on address 6
+        // simply being left at its default zero value, which already differs from
+        // the sentinel at address 4 and so still fails clearly if masking were wrong.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, nop());                    // address 0-1: padding
+        bus.writeInstruction(2, movLLoadPcRel(5, 0));       // address 2: MOV.L @(0,PC),R5
+        bus.write32(4, 0x11111111);  // correct target: (2 & ~3) + 4 + 0 = 4
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step(); // NOP
+        cpu.step(); // MOV.L @(0,PC),R5
+
+        assertEquals(0x11111111, cpu.r[5], "should read from the masked (longword-aligned) address");
+    }
+
+    @Test
+    void movaComputesEffectiveAddress() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, mova(3)); // MOVA @(3,PC),R0 -> address (0&~3)+4+3*4=16
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step();
+
+        assertEquals(16, cpu.r[0], "MOVA loads the effective ADDRESS itself, not data read from it");
     }
 
     private static int write(SimpleTestBus bus, int address, int opcode) {
