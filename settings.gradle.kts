@@ -10,5 +10,6 @@ include(
     "core-gdrom",
     "render-vulkan",
     "render-metal",
-    "app-javafx"
+    "app-javafx",
+    "app-cli"
 )

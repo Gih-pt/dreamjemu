@@ -1,0 +1,16 @@
+// Module: app-cli — a plain command-line tool for detecting, loading, and
+// inspecting Dreamcast disc images without needing app-javafx's GUI.
+// Intended as a quick manual-testing aid while the GUI is still early —
+// see /docs/STATUS.md and /docs/ROADMAP.md.
+
+plugins {
+    application
+}
+
+application {
+    mainClass.set("org.dreamjemu.cli.Main")
+}
+
+dependencies {
+    implementation(project(":core-gdrom"))
+}

@@ -5,6 +5,7 @@ High-level module breakdown for the Gradle multi-module build. Module names belo
 ```
 dreamjemu/
 ├── app-javafx/        # Desktop UI shell: library, saves, covers, settings, input, debug tools, i18n
+├── app-cli/            # Command-line disc image inspector — GUI-free testing aid while app-javafx is early
 ├── common/             # Shared utilities, logging, config, event bus
 ├── core-cpu-sh4/       # Hitachi/Renesas SH-4 CPU emulation (interpreter, later dynarec)
 ├── core-gpu-pvr2/      # PowerVR CLX2 (PVR2) tile-based GPU emulation
