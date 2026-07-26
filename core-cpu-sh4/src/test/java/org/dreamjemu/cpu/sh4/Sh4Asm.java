@@ -262,4 +262,8 @@ final class Sh4Asm {
     static int mova(int disp8) {
         return 0xC700 | (disp8 & 0xFF); // MOVA @(disp,PC),R0
     }
+
+    static int rte() {
+        return 0x002B;
+    }
 }

@@ -57,6 +57,7 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.notReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcl;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.rte;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shal;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shar;
@@ -1130,6 +1131,63 @@ class Sh4CpuTest {
         cpu.step();
 
         assertEquals(16, cpu.r[0], "MOVA loads the effective ADDRESS itself, not data read from it");
+    }
+
+    // ---- RTE (return from exception) -------------------------------------
+
+    @Test
+    void rteJumpsToSpcAndRestoresSrFromSsr() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpEqReg(0, 0)); // T := 1 (R0 == R0)
+        bus.writeInstruction(2, rte());
+        bus.writeInstruction(4, nop()); // RTE's delay slot
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.spc = 200;
+        cpu.ssr = 0; // T bit clear in the saved SR
+
+        cpu.step(); // CMP/EQ
+        assertTrue(cpu.tFlag(), "sanity check: T should be set before RTE runs");
+
+        cpu.step(); // RTE
+        assertEquals(200, cpu.pc, "PC should jump to SPC");
+        assertFalse(cpu.tFlag(), "T should be restored from SSR, overriding the T=1 set just before RTE");
+    }
+
+    @Test
+    void rteExecutesDelaySlotInstructionBeforeJumping() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, rte());
+        bus.writeInstruction(2, movImm(3, 55)); // delay slot: MOV #55,R3 — must execute BEFORE the jump
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.spc = 8;
+        cpu.ssr = 0;
+
+        cpu.step();
+
+        assertEquals(55, cpu.r[3], "the delay slot instruction's effect must be visible");
+        assertEquals(8, cpu.pc, "PC must land on SPC, not thisPc+2 or thisPc+4");
+    }
+
+    @Test
+    void rteInAnotherBranchesDelaySlotIsIllegal() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bra(2));
+        bus.writeInstruction(2, rte()); // illegal: RTE is itself a branch instruction
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        assertThrows(IllegalStateException.class, cpu::step);
+    }
+
+    @Test
+    void branchInRteDelaySlotIsIllegal() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, rte());
+        bus.writeInstruction(2, bt(0)); // illegal: a branch instruction in RTE's delay slot
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.spc = 100;
+        cpu.ssr = 0;
+
+        assertThrows(IllegalStateException.class, cpu::step);
     }
 
     private static int write(SimpleTestBus bus, int address, int opcode) {

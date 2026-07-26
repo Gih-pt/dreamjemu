@@ -21,15 +21,16 @@ import org.dreamjemu.system.Bus;
  *
  * <b>Delay slots:</b> real SH-4 hardware executes the instruction
  * immediately following a <i>delayed</i> branch ({@code BRA}, {@code BSR},
- * {@code JSR}, {@code RTS}, and eventually {@code JMP}/{@code RTE} once
- * implemented) before the branch takes effect.
+ * {@code JSR}, {@code RTS}, {@code JMP}, and {@code RTE}) before the branch
+ * takes effect.
  * {@code BT}/{@code BF} are NOT delayed branches on real hardware and never
  * have a delay slot. This interpreter models delay-slot execution for all
  * currently-implemented delayed branches: the instruction at {@code PC+2}
  * is executed first, and only then does {@code PC} jump to the branch
  * target (for {@code JSR}, the target register is read BEFORE the delay
  * slot runs, in case the delay slot modifies that register — matching real
- * hardware). Placing a branch instruction itself in a delay slot is
+ * hardware; {@code RTE} similarly reads {@code SSR}/{@code SPC} before its
+ * delay slot runs). Placing a branch instruction itself in a delay slot is
  * illegal on real hardware (it raises an "illegal slot instruction"
  * exception); this interpreter throws an {@link IllegalStateException} in
  * that case rather than silently misbehaving.
@@ -44,7 +45,15 @@ import org.dreamjemu.system.Bus;
  *       address, by design — gaps should be loud, not silently wrong.</li>
  *   <li>The Status Register only models the T ("test"/comparison result)
  *       flag so far; other bits (interrupt mask, privilege mode, etc.) are
- *       not modeled yet.</li>
+ *       not modeled yet. {@code RTE} restores the whole 32-bit register
+ *       wholesale from {@link #ssr} regardless, so this is only a gap for
+ *       code that inspects those other bits, not for RTE's own correctness.</li>
+ *   <li>There is no real exception/interrupt entry mechanism yet (no
+ *       {@code TRAPA}, no interrupt controller, no automatic hardware
+ *       save-to-SSR/SPC-and-jump-to-vector on an exception) — only the
+ *       {@code RTE} <i>return</i> path is implemented. Tests exercise it by
+ *       setting {@link #ssr}/{@link #spc} directly, the same way BSR/JSR/RTS
+ *       tests set {@link #pr} directly without a real preceding call.</li>
  * </ul>
  */
 public class Sh4Cpu {
@@ -63,6 +72,24 @@ public class Sh4Cpu {
 
     /** Procedure register (subroutine return address). Not yet written by any implemented instruction. */
     public int pr;
+
+    /**
+     * Saved Status Register — on real hardware, the exception/interrupt entry hardware
+     * copies the pre-exception SR here automatically, and {@code RTE} copies it back.
+     * This interpreter has no exception/interrupt dispatch mechanism yet (no TRAPA, no
+     * interrupt controller, no automatic SR/PC save-on-entry) — tests exercise RTE by
+     * setting this directly, the same way BSR/JSR/RTS tests set PR directly rather than
+     * needing a real "call" to have happened first.
+     */
+    public int ssr;
+
+    /**
+     * Saved Program Counter — on real hardware, the exception/interrupt entry hardware
+     * copies the pre-exception return address here automatically, and {@code RTE} jumps
+     * back to it. See {@link #ssr}'s Javadoc for how this interpreter currently expects
+     * it to be set (directly, not via a real exception-entry mechanism yet).
+     */
+    public int spc;
 
     /** High 32 bits of the 64-bit multiply-accumulate result (DMULS.L/DMULU.L). Unused by MUL.L/MULS.W/MULU.W. */
     public int mach;
@@ -171,6 +198,20 @@ public class Sh4Cpu {
             pc = target;
             return;
         }
+        if (opcode == 0x002B) {
+            // RTE — delayed return-from-exception: like RTS, but restores BOTH the
+            // Status Register (from SSR) and PC (from SPC), after the delay slot
+            // executes. Both are read NOW, before the delay slot runs, matching the
+            // same "read target before delay slot" discipline as JSR/RTS/JMP above,
+            // in case the delay slot itself writes SSR/SPC (e.g. via LDC, not yet
+            // implemented, but the ordering should already be correct for when it is).
+            int targetPc = spc;
+            int targetSr = ssr;
+            executeDelaySlot(thisPc + 2);
+            sr = targetSr;
+            pc = targetPc;
+            return;
+        }
 
         pc = executeNonDelayedInstruction(thisPc, opcode);
     }
@@ -197,6 +238,7 @@ public class Sh4Cpu {
                 || (opcode & 0xF0FF) == 0x400B  // JSR
                 || (opcode & 0xF0FF) == 0x402B  // JMP
                 || opcode == 0x000B             // RTS
+                || opcode == 0x002B             // RTE
                 || (opcode & 0xFF00) == 0x8900  // BT
                 || (opcode & 0xFF00) == 0x8B00; // BF
     }
