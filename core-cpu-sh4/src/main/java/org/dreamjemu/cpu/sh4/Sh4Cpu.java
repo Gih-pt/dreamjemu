@@ -280,6 +280,114 @@ public class Sh4Cpu {
         } else if ((opcode & 0xFF00) == 0x8800) {
             // CMP/EQ #imm,R0 — T = (R0 == sign-extended 8-bit immediate)
             setT(r[0] == signExtend8(imm8));
+        } else if ((opcode & 0xF00F) == 0x3002) {
+            // CMP/HS Rm,Rn — T = (Rn >= Rm), UNSIGNED comparison.
+            setT(Integer.compareUnsigned(r[n], r[m]) >= 0);
+        } else if ((opcode & 0xF00F) == 0x3003) {
+            // CMP/GE Rm,Rn — T = (Rn >= Rm), signed comparison (Java's int is already signed).
+            setT(r[n] >= r[m]);
+        } else if ((opcode & 0xF00F) == 0x3006) {
+            // CMP/HI Rm,Rn — T = (Rn > Rm), UNSIGNED comparison.
+            setT(Integer.compareUnsigned(r[n], r[m]) > 0);
+        } else if ((opcode & 0xF00F) == 0x3007) {
+            // CMP/GT Rm,Rn — T = (Rn > Rm), signed comparison.
+            setT(r[n] > r[m]);
+        } else if ((opcode & 0xF0FF) == 0x4015) {
+            // CMP/PL Rn — T = (Rn > 0), signed.
+            setT(r[n] > 0);
+        } else if ((opcode & 0xF0FF) == 0x4011) {
+            // CMP/PZ Rn — T = (Rn >= 0), signed.
+            setT(r[n] >= 0);
+        } else if ((opcode & 0xF00F) == 0x200C) {
+            // CMP/STR Rm,Rn — T = 1 if ANY of the 4 corresponding bytes of Rn/Rm are equal
+            // (useful for zero-terminated-string length/matching: XOR then look for a zero byte).
+            int diff = r[n] ^ r[m];
+            setT((diff & 0xFF000000) == 0 || (diff & 0x00FF0000) == 0
+                    || (diff & 0x0000FF00) == 0 || (diff & 0x000000FF) == 0);
+        } else if ((opcode & 0xF00F) == 0x2008) {
+            // TST Rm,Rn — T = ((Rn & Rm) == 0). Contents of Rn/Rm unchanged.
+            setT((r[n] & r[m]) == 0);
+        } else if ((opcode & 0xFF00) == 0xC800) {
+            // TST #imm,R0 — T = ((R0 & zero-extended imm) == 0).
+            setT((r[0] & (imm8 & 0xFF)) == 0);
+        } else if ((opcode & 0xF0FF) == 0x4010) {
+            // DT Rn — Rn -= 1; T = (Rn == 0). The SH-4's decrement-and-test loop-counter idiom
+            // (paired with BF to loop while nonzero — see the DIV1 examples this codebase
+            // already references for the same "count down, test, branch" pattern).
+            r[n] = r[n] - 1;
+            setT(r[n] == 0);
+        } else if ((opcode & 0xF00F) == 0x600E) {
+            // EXTS.B Rm,Rn — sign-extend Rm's low BYTE to 32 bits.
+            // Java's (byte) cast truncates to the low 8 bits as a signed byte, and assigning
+            // that back to an int widens it with sign extension — exactly what's needed here.
+            r[n] = (byte) r[m];
+        } else if ((opcode & 0xF00F) == 0x600F) {
+            // EXTS.W Rm,Rn — sign-extend Rm's low WORD to 32 bits (same (byte)-cast trick, but 16-bit).
+            r[n] = (short) r[m];
+        } else if ((opcode & 0xF00F) == 0x600C) {
+            // EXTU.B Rm,Rn — zero-extend Rm's low BYTE to 32 bits.
+            r[n] = r[m] & 0xFF;
+        } else if ((opcode & 0xF00F) == 0x600D) {
+            // EXTU.W Rm,Rn — zero-extend Rm's low WORD to 32 bits.
+            r[n] = r[m] & 0xFFFF;
+        } else if ((opcode & 0xF00F) == 0x6008) {
+            // SWAP.B Rm,Rn — swaps Rm's low two BYTES; upper 16 bits pass through unchanged.
+            int upper16 = r[m] & 0xFFFF0000;
+            int lowByte = r[m] & 0xFF;
+            int nextByte = (r[m] >>> 8) & 0xFF;
+            r[n] = upper16 | (lowByte << 8) | nextByte;
+        } else if ((opcode & 0xF00F) == 0x6009) {
+            // SWAP.W Rm,Rn — swaps Rm's upper and lower 16-bit halves.
+            r[n] = (r[m] << 16) | ((r[m] >>> 16) & 0xFFFF);
+        } else if ((opcode & 0xF00F) == 0x200D) {
+            // XTRCT Rm,Rn — extracts the middle 32 bits of the 64-bit value formed by
+            // concatenating Rm (high 32) and Rn (low 32): Rm's low 16 bits become the result's
+            // high 16, and Rn's high 16 bits become the result's low 16.
+            r[n] = (r[m] << 16) | ((r[n] >>> 16) & 0xFFFF);
+        } else if ((opcode & 0xF00F) == 0x300E) {
+            // ADDC Rm,Rn — Rn = Rn + Rm + T (unsigned), carry-out -> T. Used to chain
+            // additions wider than 32 bits. Computed via a 64-bit intermediate so the carry
+            // is just "did the true sum exceed 32 bits" — semantically identical to the SH-4
+            // manual's own two-step unsigned-overflow check, expressed without relying on
+            // any Java-specific unsigned-comparison trick.
+            long sum = (r[n] & 0xFFFFFFFFL) + (r[m] & 0xFFFFFFFFL) + (tFlag() ? 1 : 0);
+            setT(sum > 0xFFFFFFFFL);
+            r[n] = (int) sum;
+        } else if ((opcode & 0xF00F) == 0x300A) {
+            // SUBC Rm,Rn — Rn = Rn - Rm - T (unsigned), borrow-out -> T. The subtraction
+            // counterpart of ADDC, for chaining subtractions wider than 32 bits.
+            long diff = (r[n] & 0xFFFFFFFFL) - (r[m] & 0xFFFFFFFFL) - (tFlag() ? 1 : 0);
+            setT(diff < 0);
+            r[n] = (int) diff;
+        } else if ((opcode & 0xF00F) == 0x600A) {
+            // NEGC Rm,Rn — Rn = 0 - Rm - T (unsigned), borrow-out -> T. Equivalent to SUBC
+            // with Rn's "before" value implicitly 0; also usable to sign-invert a value wider
+            // than 32 bits (see the SH-4 manual's own worked multi-word negation example).
+            long diff = 0L - (r[m] & 0xFFFFFFFFL) - (tFlag() ? 1 : 0);
+            setT(diff < 0);
+            r[n] = (int) diff;
+        } else if ((opcode & 0xF00F) == 0x300F) {
+            // ADDV Rm,Rn — Rn += Rm (signed), SIGNED overflow -> T. Direct port of the SH-4
+            // manual's own algorithm (same-sign operands producing a different-sign result),
+            // rather than a from-scratch reimplementation, since that's the actual documented
+            // definition of "signed overflow" here rather than something to re-derive.
+            int addDest = (r[n] >= 0) ? 0 : 1;
+            int addSrc = (r[m] >= 0) ? 0 : 1;
+            addSrc += addDest;
+            r[n] = r[n] + r[m];
+            int addAns = (r[n] >= 0) ? 0 : 1;
+            addAns += addDest;
+            setT((addSrc == 0 || addSrc == 2) && addAns == 1);
+        } else if ((opcode & 0xF00F) == 0x300B) {
+            // SUBV Rm,Rn — Rn -= Rm (signed), SIGNED underflow -> T. Direct port of the SH-4
+            // manual's own algorithm, mirroring ADDV above.
+            int subDest = (r[n] >= 0) ? 0 : 1;
+            int subSrc = (r[m] >= 0) ? 0 : 1;
+            subSrc += subDest;
+            r[n] = r[n] - r[m];
+            int subAns = (r[n] >= 0) ? 0 : 1;
+            subAns += subDest;
+            setT(subSrc == 1 && subAns == 1);
         } else if ((opcode & 0xFF00) == 0x8900) {
             // BT label — branch if T is set. NOT a delayed branch on real hardware.
             if (tFlag()) {

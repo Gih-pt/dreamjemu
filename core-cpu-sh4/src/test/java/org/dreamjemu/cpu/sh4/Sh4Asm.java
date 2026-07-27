@@ -266,4 +266,92 @@ final class Sh4Asm {
     static int rte() {
         return 0x002B;
     }
+
+    static int cmpHs(int n, int m) {
+        return 0x3002 | (n << 8) | (m << 4);
+    }
+
+    static int cmpGe(int n, int m) {
+        return 0x3003 | (n << 8) | (m << 4);
+    }
+
+    static int cmpHi(int n, int m) {
+        return 0x3006 | (n << 8) | (m << 4);
+    }
+
+    static int cmpGt(int n, int m) {
+        return 0x3007 | (n << 8) | (m << 4);
+    }
+
+    static int cmpPl(int n) {
+        return 0x4015 | (n << 8);
+    }
+
+    static int cmpPz(int n) {
+        return 0x4011 | (n << 8);
+    }
+
+    static int cmpStr(int n, int m) {
+        return 0x200C | (n << 8) | (m << 4);
+    }
+
+    static int tstReg(int n, int m) {
+        return 0x2008 | (n << 8) | (m << 4);
+    }
+
+    static int tstImm(int imm8) {
+        return 0xC800 | (imm8 & 0xFF);
+    }
+
+    static int dt(int n) {
+        return 0x4010 | (n << 8);
+    }
+
+    static int extsB(int n, int m) {
+        return 0x600E | (n << 8) | (m << 4);
+    }
+
+    static int extsW(int n, int m) {
+        return 0x600F | (n << 8) | (m << 4);
+    }
+
+    static int extuB(int n, int m) {
+        return 0x600C | (n << 8) | (m << 4);
+    }
+
+    static int extuW(int n, int m) {
+        return 0x600D | (n << 8) | (m << 4);
+    }
+
+    static int swapB(int n, int m) {
+        return 0x6008 | (n << 8) | (m << 4);
+    }
+
+    static int swapW(int n, int m) {
+        return 0x6009 | (n << 8) | (m << 4);
+    }
+
+    static int xtrct(int n, int m) {
+        return 0x200D | (n << 8) | (m << 4);
+    }
+
+    static int addc(int n, int m) {
+        return 0x300E | (n << 8) | (m << 4);
+    }
+
+    static int subc(int n, int m) {
+        return 0x300A | (n << 8) | (m << 4);
+    }
+
+    static int negc(int n, int m) {
+        return 0x600A | (n << 8) | (m << 4);
+    }
+
+    static int addv(int n, int m) {
+        return 0x300F | (n << 8) | (m << 4);
+    }
+
+    static int subv(int n, int m) {
+        return 0x300B | (n << 8) | (m << 4);
+    }
 }

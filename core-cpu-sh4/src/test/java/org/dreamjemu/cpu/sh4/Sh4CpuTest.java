@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import static org.dreamjemu.cpu.sh4.Sh4Asm.addImm;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.addReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.addc;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.addv;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.andImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.andReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bf;
@@ -12,11 +14,31 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.bsr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bt;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpGe;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpGt;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpHi;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpHs;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpPl;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpPz;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpStr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.dt;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.div0s;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.div0u;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.div1;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.dmulsL;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.dmuluL;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.extsB;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.extsW;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.extuB;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.extuW;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.negc;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.subc;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.subv;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.swapB;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.swapW;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.tstImm;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.tstReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.xtrct;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.jmp;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.jsr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.mova;
@@ -1188,6 +1210,367 @@ class Sh4CpuTest {
         cpu.ssr = 0;
 
         assertThrows(IllegalStateException.class, cpu::step);
+    }
+
+    // ---- Comparisons (CMP/HS, CMP/GE, CMP/HI, CMP/GT, CMP/PL, CMP/PZ, CMP/STR) ----
+
+    @Test
+    void cmpHsIsUnsignedGreaterOrEqual() {
+        // -1 (0xFFFFFFFF) is huge as unsigned, tiny as signed -- this distinguishes
+        // CMP/HS (unsigned) from CMP/GE (signed) sharply.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpHs(0, 1)); // CMP/HS R1,R0 -> T = (R0 >= R1) unsigned
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = -1;
+        cpu.r[1] = 1;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag(), "-1 is unsigned-huge, so it IS >= 1 unsigned");
+    }
+
+    @Test
+    void cmpGeIsSignedGreaterOrEqual() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpGe(0, 1)); // CMP/GE R1,R0 -> T = (R0 >= R1) signed
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = -1;
+        cpu.r[1] = 1;
+
+        cpu.step();
+
+        assertFalse(cpu.tFlag(), "-1 is signed-negative, so it is NOT >= 1 signed");
+    }
+
+    @Test
+    void cmpHiIsUnsignedStrictlyGreater() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpHi(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 5;
+        cpu.r[1] = 5;
+
+        cpu.step();
+
+        assertFalse(cpu.tFlag(), "equal values should not satisfy strictly-greater");
+    }
+
+    @Test
+    void cmpGtIsSignedStrictlyGreater() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpGt(1, 0)); // CMP/GT R0,R1 -> T = (R1 > R0) signed
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 10;
+        cpu.r[0] = -5;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag());
+    }
+
+    @Test
+    void cmpPlIsTrueOnlyForStrictlyPositive() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpPl(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0;
+
+        cpu.step();
+
+        assertFalse(cpu.tFlag(), "zero is not > 0");
+    }
+
+    @Test
+    void cmpPzIsTrueForZeroOrPositive() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpPz(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag(), "zero IS >= 0");
+    }
+
+    @Test
+    void cmpStrDetectsAnyMatchingByte() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpStr(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x11223344;
+        cpu.r[1] = 0xAA22BBCC; // second-from-top byte (0x22) matches R0's
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag());
+    }
+
+    @Test
+    void cmpStrFindsNoMatchWhenAllBytesDiffer() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpStr(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x11223344;
+        cpu.r[1] = (int) 0xAABBCCDD;
+
+        cpu.step();
+
+        assertFalse(cpu.tFlag());
+    }
+
+    // ---- TST, DT ----
+
+    @Test
+    void tstRegSetsTWhenAndIsZero() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, tstReg(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0b1010;
+        cpu.r[1] = 0b0101; // no overlapping bits
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag());
+    }
+
+    @Test
+    void tstImmClearsTWhenAndIsNonZero() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, tstImm(0x0F));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0xFF;
+
+        cpu.step();
+
+        assertFalse(cpu.tFlag());
+    }
+
+    @Test
+    void dtDecrementsAndSetsTWhenReachingZero() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, dt(4));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[4] = 1;
+
+        cpu.step();
+
+        assertEquals(0, cpu.r[4]);
+        assertTrue(cpu.tFlag());
+    }
+
+    @Test
+    void dtDoesNotSetTWhenStillNonZero() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, dt(4));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[4] = 5;
+
+        cpu.step();
+
+        assertEquals(4, cpu.r[4]);
+        assertFalse(cpu.tFlag());
+    }
+
+    // ---- Sign/zero extension and byte/word manipulation ----
+
+    @Test
+    void extsBSignExtendsNegativeByte() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, extsB(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0xFE; // -2 as a byte
+
+        cpu.step();
+
+        assertEquals(-2, cpu.r[1]);
+    }
+
+    @Test
+    void extuBZeroExtendsSameByte() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, extuB(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0xFE;
+
+        cpu.step();
+
+        assertEquals(0xFE, cpu.r[1], "unsigned: 0xFE stays 254, not -2");
+    }
+
+    @Test
+    void extsWSignExtendsNegativeWord() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, extsW(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x8000;
+
+        cpu.step();
+
+        assertEquals(0xFFFF8000, cpu.r[1]);
+    }
+
+    @Test
+    void extuWZeroExtendsSameWord() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, extuW(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x8000;
+
+        cpu.step();
+
+        assertEquals(0x8000, cpu.r[1]);
+    }
+
+    @Test
+    void swapBSwapsLowTwoBytesOnly() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, swapB(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x12345678;
+
+        cpu.step();
+
+        assertEquals(0x12347856, cpu.r[1], "upper 16 bits (0x1234) pass through; low 2 bytes (0x56,0x78) swap");
+    }
+
+    @Test
+    void swapWSwapsUpperAndLowerHalves() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, swapW(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x12345678;
+
+        cpu.step();
+
+        assertEquals(0x56781234, cpu.r[1]);
+    }
+
+    @Test
+    void xtrctExtractsMiddle32Bits() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, xtrct(1, 0)); // XTRCT R0,R1 -> R1 = middle32(R0:R1)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x11112222; // high 32 bits of the conceptual 64-bit value
+        cpu.r[1] = 0x33334444; // low 32 bits
+
+        cpu.step();
+
+        assertEquals(0x22223333, cpu.r[1], "low 16 of R0 (2222) + high 16 of R1 (3333)");
+    }
+
+    // ---- Multi-word arithmetic: ADDC/SUBC/NEGC (carry/borrow chaining), ADDV/SUBV (overflow) ----
+
+    @Test
+    void addcChainsCarryAcrossTwoWords() {
+        // Mirrors the SH-4 manual's own 64-bit addition example: r1 = 0x00000001,
+        // r3 = 0xFFFFFFFF -> addc r3,r1 should carry (T=1), r1 becomes 0.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, addc(1, 3)); // ADDC R3,R1
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 0x00000001;
+        cpu.r[3] = 0xFFFFFFFF;
+
+        cpu.step();
+
+        assertEquals(0, cpu.r[1]);
+        assertTrue(cpu.tFlag(), "adding 1 + 0xFFFFFFFF overflows 32 bits -> carry");
+    }
+
+    @Test
+    void addcDoesNotCarryWhenSumFits() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, addc(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 5;
+        cpu.r[1] = 3;
+
+        cpu.step();
+
+        assertEquals(8, cpu.r[0]);
+        assertFalse(cpu.tFlag());
+    }
+
+    @Test
+    void subcChainsBorrowAcrossTwoWords() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, subc(0, 1)); // SUBC R1,R0 -> R0 = R0 - R1 - T
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0;
+        cpu.r[1] = 1;
+
+        cpu.step();
+
+        assertEquals(-1, cpu.r[0], "0 - 1 wraps to 0xFFFFFFFF");
+        assertTrue(cpu.tFlag(), "borrow occurred");
+    }
+
+    @Test
+    void negcNegatesAndSetsBorrowForNonZero() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, negc(1, 0)); // NEGC R0,R1 -> R1 = 0 - R0 - T
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 1;
+
+        cpu.step();
+
+        assertEquals(-1, cpu.r[1], "0 - 1 = -1 (0xFFFFFFFF)");
+        assertTrue(cpu.tFlag(), "negating any nonzero value borrows");
+    }
+
+    @Test
+    void negcOfZeroWithClearTDoesNotBorrow() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, negc(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0;
+
+        cpu.step();
+
+        assertEquals(0, cpu.r[1]);
+        assertFalse(cpu.tFlag(), "0 - 0 - 0 borrows nothing");
+    }
+
+    @Test
+    void addvSetsTOnSignedOverflow() {
+        // From the SH-4 manual's own ADDV example: 0x7FFFFFFE + 2 overflows into negative.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, addv(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 2;
+        cpu.r[1] = 0x7FFFFFFE;
+
+        cpu.step();
+
+        assertEquals(0x80000000, cpu.r[1]);
+        assertTrue(cpu.tFlag());
+    }
+
+    @Test
+    void addvDoesNotSetTWhenNoOverflow() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, addv(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 1;
+        cpu.r[1] = 0x7FFFFFFE;
+
+        cpu.step();
+
+        assertEquals(0x7FFFFFFF, cpu.r[1]);
+        assertFalse(cpu.tFlag());
+    }
+
+    @Test
+    void subvSetsTOnSignedUnderflow() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, subv(1, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 2;
+        cpu.r[1] = 0x80000001;
+
+        cpu.step();
+
+        assertEquals(0x7FFFFFFF, cpu.r[1]);
+        assertTrue(cpu.tFlag());
     }
 
     private static int write(SimpleTestBus bus, int address, int opcode) {
