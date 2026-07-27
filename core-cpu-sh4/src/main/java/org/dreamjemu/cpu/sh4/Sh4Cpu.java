@@ -446,6 +446,55 @@ public class Sh4Cpu {
             boolean newT = (r[n] & 0x80000000) != 0;
             r[n] = (r[n] << 1) | (tFlag() ? 1 : 0);
             setT(newT);
+        } else if ((opcode & 0xF0FF) == 0x4025) {
+            // ROTCR Rn — rotate right through T: new T = old bit 0; Rn = (Rn>>>1) | (old T << 31).
+            // The mirror image of ROTCL above (same 33-bit-rotate-through-T idea, opposite direction).
+            boolean newT = (r[n] & 1) != 0;
+            r[n] = (r[n] >>> 1) | (tFlag() ? 0x80000000 : 0);
+            setT(newT);
+        } else if ((opcode & 0xF0FF) == 0x4004) {
+            // ROTL Rn — plain (non-T-chained) rotate left: T = old MSB; Rn = (Rn<<1) | T.
+            // Unlike ROTCL, the bit rotated out becomes BOTH the new T and the new LSB
+            // (it doesn't matter what T held before this ran).
+            boolean msb = (r[n] & 0x80000000) != 0;
+            r[n] = (r[n] << 1) | (msb ? 1 : 0);
+            setT(msb);
+        } else if ((opcode & 0xF0FF) == 0x4005) {
+            // ROTR Rn — plain rotate right: T = old LSB; Rn = (Rn>>>1) | (T << 31).
+            boolean lsb = (r[n] & 1) != 0;
+            r[n] = (r[n] >>> 1) | (lsb ? 0x80000000 : 0);
+            setT(lsb);
+        } else if ((opcode & 0xF00F) == 0x400C) {
+            // SHAD Rm,Rn — dynamic ARITHMETIC shift: Rm>0 shifts Rn left by (Rm&0x1F); Rm<0
+            // shifts Rn right (sign-extending) by (-Rm&0x1F); Rm==0 leaves Rn unchanged.
+            // Java's <<//>> operators already mask their shift count to the low 5 bits for
+            // an int operand, which is exactly the "&0x1F" the SH-4 spec calls for — including
+            // the edge case Rm==Integer.MIN_VALUE, where "-Rm" itself overflows back to
+            // MIN_VALUE in ordinary 32-bit wraparound arithmetic (same as real hardware would
+            // do), and MIN_VALUE & 0x1F is 0 either way, so no special-casing is needed here.
+            if (r[m] > 0) {
+                r[n] = r[n] << r[m];
+            } else if (r[m] < 0) {
+                r[n] = r[n] >> (-r[m]);
+            }
+        } else if ((opcode & 0xF00F) == 0x400D) {
+            // SHLD Rm,Rn — same as SHAD above, but the right-shift case (Rm<0) is LOGICAL
+            // (zero-filling), not arithmetic.
+            if (r[m] > 0) {
+                r[n] = r[n] << r[m];
+            } else if (r[m] < 0) {
+                r[n] = r[n] >>> (-r[m]);
+            }
+        } else if ((opcode & 0xF0FF) == 0x401B) {
+            // TAS.B @Rn — atomic (on real hardware) test-and-set: reads the byte at @Rn,
+            // T = (that byte == 0), then writes the byte back with its MSB forced to 1
+            // (0x80), regardless of T. The classic single-instruction lock/mutex primitive.
+            // This interpreter runs single-threaded, so there's no real bus lock to model —
+            // the read-test-write sequence is inherently atomic here already.
+            long address = Integer.toUnsignedLong(r[n]);
+            byte value = bus.read8(address);
+            setT(value == 0);
+            bus.write8(address, (byte) (value | 0x80));
         } else if ((opcode & 0xF00F) == 0x2000) {
             // MOV.B Rm,@Rn — store the low byte of Rm to the address held in Rn.
             bus.write8(Integer.toUnsignedLong(r[n]), (byte) r[m]);

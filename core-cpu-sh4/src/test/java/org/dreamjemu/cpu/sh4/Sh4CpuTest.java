@@ -78,6 +78,12 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.nop;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.notReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.orReg;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.rotl;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.rotr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shld;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.tasB;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcl;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rte;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
@@ -1571,6 +1577,135 @@ class Sh4CpuTest {
 
         assertEquals(0x7FFFFFFF, cpu.r[1]);
         assertTrue(cpu.tFlag());
+    }
+
+    // ---- ROTL, ROTR, ROTCR, SHAD, SHLD, TAS.B -----------------------------
+
+    @Test
+    void rotlRotatesMsbIntoLsbAndT() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, rotl(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000001;
+
+        cpu.step();
+
+        assertEquals(0x00000003, cpu.r[0], "MSB rotates into LSB: 1000...0001 -> 0000...0011");
+        assertTrue(cpu.tFlag(), "the rotated-out MSB (1) becomes T");
+    }
+
+    @Test
+    void rotrRotatesLsbIntoMsbAndT() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, rotr(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x00000003;
+
+        cpu.step();
+
+        assertEquals(0x80000001, cpu.r[0]);
+        assertTrue(cpu.tFlag(), "the rotated-out LSB (1) becomes T");
+    }
+
+    @Test
+    void rotcrUsesOldTAsNewMsbAndCapturesOldLsbAsNewT() {
+        // Set T=1 first (via CMP/PZ on a non-negative register), THEN run ROTCR on a
+        // register whose LSB is 0 -- confirms both halves of the 33-bit rotate: the
+        // OLD T value (1) becomes the new MSB, and the OLD LSB (0) becomes the new T.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpPz(1)); // R1 >= 0 -> T := 1
+        bus.writeInstruction(2, rotcr(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 0;
+        cpu.r[0] = 0x00000002; // LSB is 0
+
+        cpu.step(); // CMP/PZ
+        cpu.step(); // ROTCR
+
+        assertEquals(0x80000001, cpu.r[0], "old T (1) shifted into the MSB; 2>>>1==1, so result is 0x80000001");
+        assertFalse(cpu.tFlag(), "the old LSB (0) becomes the new T");
+    }
+
+    @Test
+    void shadShiftsLeftForPositiveRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shad(0, 1)); // SHAD R1,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 1;
+        cpu.r[1] = 4;
+
+        cpu.step();
+
+        assertEquals(16, cpu.r[0]);
+    }
+
+    @Test
+    void shadShiftsRightArithmeticForNegativeRm() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shad(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = -16; // negative, to distinguish arithmetic (sign-filling) from logical shift
+        cpu.r[1] = -2; // shift right by 2
+
+        cpu.step();
+
+        assertEquals(-4, cpu.r[0], "arithmetic right shift sign-extends: -16 >> 2 == -4");
+    }
+
+    @Test
+    void shadIsNoOpWhenRmIsZero() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shad(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 12345;
+        cpu.r[1] = 0;
+
+        cpu.step();
+
+        assertEquals(12345, cpu.r[0]);
+    }
+
+    @Test
+    void shldShiftsRightLogicalForNegativeRm() {
+        // Same negative Rn as the SHAD test above, but SHLD must zero-fill instead of
+        // sign-extend -- this is the whole point of the two instructions being distinct.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shld(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = -16;
+        cpu.r[1] = -2;
+
+        cpu.step();
+
+        assertEquals(-16 >>> 2, cpu.r[0], "logical right shift zero-fills, unlike SHAD's sign-extension");
+    }
+
+    @Test
+    void tasBSetsTWhenByteIsZeroAndAlwaysSetsMsb() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, tasB(1));
+        bus.write8(50, (byte) 0x00);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 50;
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag(), "the byte read WAS zero");
+        assertEquals((byte) 0x80, bus.read8(50), "the byte's MSB is always forced to 1 afterward");
+    }
+
+    @Test
+    void tasBClearsTWhenByteIsNonZeroButStillSetsMsb() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, tasB(1));
+        bus.write8(50, (byte) 0x01);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 50;
+
+        cpu.step();
+
+        assertFalse(cpu.tFlag(), "the byte read was NOT zero");
+        assertEquals((byte) 0x81, bus.read8(50), "MSB forced to 1, low bits preserved");
     }
 
     private static int write(SimpleTestBus bus, int address, int opcode) {

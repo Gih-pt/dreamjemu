@@ -354,4 +354,28 @@ final class Sh4Asm {
     static int subv(int n, int m) {
         return 0x300B | (n << 8) | (m << 4);
     }
+
+    static int rotl(int n) {
+        return 0x4004 | (n << 8);
+    }
+
+    static int rotr(int n) {
+        return 0x4005 | (n << 8);
+    }
+
+    static int rotcr(int n) {
+        return 0x4025 | (n << 8);
+    }
+
+    static int shad(int n, int m) {
+        return 0x400C | (n << 8) | (m << 4);
+    }
+
+    static int shld(int n, int m) {
+        return 0x400D | (n << 8) | (m << 4);
+    }
+
+    static int tasB(int n) {
+        return 0x401B | (n << 8);
+    }
 }
