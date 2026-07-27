@@ -15,22 +15,22 @@ import java.nio.charset.StandardCharsets;
  * or reads any original Sega BIOS/firmware file. IP.BIN itself lives on the
  * user's own legally-owned disc image, not extracted from console hardware.
  *
- * <b>On the field layout below:</b> this project does not have access to an
- * original Sega technical reference for this header, and a direct fetch of
- * an existing open-source emulator's source file was blocked by that site's
- * robots.txt during development. The layout implemented here was instead
- * reconstructed by cross-referencing multiple independent public sources:
- * real debug log output from three different retail games (via Flycast's
- * open-source "reios" HLE BIOS, itself GPL-licensed and built from the same
- * kind of publicly available technical knowledge), and a separately
- * documented, independently confirmed byte offset for the region-flag byte
- * (0x30) used by an unrelated IP.BIN-patching tool. The resulting field
- * widths also sum to exactly 0x80 (128) bytes before the game title field,
- * which is a strong internal consistency signal for a real hardware format.
- * Even so, this has NOT been validated against a real disc image byte-for-
- * byte, and should be treated as provisional until a contributor does that
- * validation (see /docs/STATUS.md) — this is a case where an incorrect
- * offset would fail loudly (garbled/empty fields) rather than silently.
+ * <b>On the field layout below:</b> every offset was cross-checked
+ * field-by-field against Marcus Comstedt's "Dreamcast Programming -
+ * IP0000.BIN" page (mc.pp.se/dc/ip0000.bin.html) — the original, most-cited
+ * public technical reference for this header, in continuous use by the
+ * Dreamcast homebrew/emulation community since 2000 (and the ultimate
+ * source, directly or indirectly, for essentially every open-source tool
+ * that reads IP.BIN, including Flycast's "reios"). Every field below
+ * matches that reference exactly; nothing here was extracted from Sega's
+ * own materials or any BIOS/firmware dump. The 16-byte Device Information
+ * field's structure and its embedded CRC-16 algorithm (see
+ * {@link #calculateDeviceInfoCrc}) are documented there too, and that
+ * algorithm's implementation here has been independently verified against
+ * the standard CRC-16/CCITT-FALSE check value (see
+ * {@code IpBinHeaderTest}) — the variant it turns out to be — since no
+ * publicly available, independently-sourced real Dreamcast product-number/
+ * version-to-CRC example was found to cross-check against directly.
  */
 public record IpBinHeader(
         String hardwareId,
@@ -125,5 +125,63 @@ public record IpBinHeader(
     /** True if {@link #hardwareId()} matches the expected Dreamcast hardware ID string. */
     public boolean isValidDreamcastHeader() {
         return EXPECTED_HARDWARE_ID.equals(hardwareId());
+    }
+
+    /**
+     * Parses the 4-hex-digit CRC-16 prefix embedded at the start of
+     * {@link #deviceInfo()} (e.g. {@code "8B40"} in {@code "8B40 GD-ROM2/3"}),
+     * for comparing against {@link #calculateDeviceInfoCrc}.
+     *
+     * @return the parsed value, or empty if the field doesn't start with 4 hex digits
+     */
+    public java.util.OptionalInt embeddedDeviceInfoCrc() {
+        if (deviceInfo.length() < 4) {
+            return java.util.OptionalInt.empty();
+        }
+        try {
+            return java.util.OptionalInt.of(Integer.parseInt(deviceInfo.substring(0, 4), 16));
+        } catch (NumberFormatException e) {
+            return java.util.OptionalInt.empty();
+        }
+    }
+
+    /**
+     * Computes the CRC-16 that a genuine disc's {@link #deviceInfo()} field
+     * should begin with: a checksum over the raw Product Number + Product
+     * Version bytes (offsets 0x40-0x4F, 16 bytes total — <i>before</i>
+     * padding is trimmed, since padding spaces are part of the checksummed
+     * data). Per mc.pp.se/dc/ip0000.bin.html, this is "exactly the same CRC
+     * algorithm as for the VMS file headers, except that the initial
+     * remainder is FFFF instead of 0" — which turns out to be the standard
+     * CRC-16/CCITT-FALSE variant (poly 0x1021, init 0xFFFF, no bit
+     * reflection, no output XOR); see {@link #crc16Ccitt} for where that's
+     * verified against an independently-published check value.
+     *
+     * @param header the full 256-byte (or longer) raw header, as passed to {@link #parse}
+     */
+    public static int calculateDeviceInfoCrc(byte[] header) {
+        return crc16Ccitt(header, OFF_PRODUCT_NUMBER, LEN_PRODUCT_NUMBER + LEN_PRODUCT_VERSION);
+    }
+
+    /**
+     * CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection, no XOR-out) —
+     * a direct port of the C implementation documented at
+     * mc.pp.se/dc/ip0000.bin.html for IP.BIN's Device Information field.
+     * Package-private so {@code IpBinHeaderTest} can verify it directly
+     * against that variant's standard, independently-published check value
+     * (0x29B1 for the ASCII string {@code "123456789"}) — since no
+     * independently-sourced real Dreamcast product-number/version-to-CRC
+     * example was available to cross-check the higher-level
+     * {@link #calculateDeviceInfoCrc} against directly.
+     */
+    static int crc16Ccitt(byte[] data, int offset, int length) {
+        int n = 0xFFFF;
+        for (int i = offset; i < offset + length; i++) {
+            n ^= (data[i] & 0xFF) << 8;
+            for (int bit = 0; bit < 8; bit++) {
+                n = ((n & 0x8000) != 0) ? ((n << 1) ^ 4129) : (n << 1);
+            }
+        }
+        return n & 0xFFFF;
     }
 }

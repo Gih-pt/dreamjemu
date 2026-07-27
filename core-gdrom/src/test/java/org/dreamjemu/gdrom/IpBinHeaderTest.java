@@ -92,4 +92,42 @@ class IpBinHeaderTest {
         assertEquals(6, ipBin.productVersion().length());
         assertEquals(8, ipBin.releaseDate().length());
     }
+
+    @Test
+    void crc16MatchesTheStandardCcittFalseCheckValue() {
+        // No independently-sourced real Dreamcast product-number/version-to-CRC
+        // example was available, so this verifies the algorithm itself against
+        // the standard, independently-published check value for the CRC-16
+        // variant it turns out to be (CRC-16/CCITT-FALSE): 0x29B1 for "123456789".
+        byte[] input = "123456789".getBytes(StandardCharsets.US_ASCII);
+
+        int crc = IpBinHeader.crc16Ccitt(input, 0, input.length);
+
+        assertEquals(0x29B1, crc);
+    }
+
+    @Test
+    void calculateDeviceInfoCrcMatchesEmbeddedCrcInSyntheticHeader() {
+        byte[] header = buildSyntheticHeader();
+        // buildSyntheticHeader() already places "T-00001" / "V1.000" at the
+        // Product Number / Product Version offsets (0x40/0x4A) -- compute what
+        // their real checksum is, and write it into the Device Info field's
+        // 4-hex-digit CRC prefix, exactly where a genuine disc would have it.
+        int expectedCrc = IpBinHeader.calculateDeviceInfoCrc(header);
+        place(header, 0x20, String.format("%04X GD-ROM1/1", expectedCrc));
+
+        IpBinHeader ipBin = IpBinHeader.parse(header);
+
+        assertEquals(java.util.OptionalInt.of(expectedCrc), ipBin.embeddedDeviceInfoCrc());
+    }
+
+    @Test
+    void embeddedDeviceInfoCrcIsEmptyWhenNotHexDigits() {
+        byte[] header = buildSyntheticHeader(); // deviceInfo starts with "ABCD", which IS valid hex...
+        place(header, 0x20, "ZZZZ GD-ROM1/1"); // ...so overwrite with non-hex characters instead
+
+        IpBinHeader ipBin = IpBinHeader.parse(header);
+
+        assertEquals(java.util.OptionalInt.empty(), ipBin.embeddedDeviceInfoCrc());
+    }
 }
