@@ -130,6 +130,38 @@ class Iso9660FileSystemTest {
     }
 
     @Test
+    void readsTheBootFilesFullContentsAcrossMultipleSectors() throws IOException {
+        MemorySectorSource source = buildSyntheticDisc();
+
+        // The boot file entry (from buildSyntheticDisc) declares 12345 bytes
+        // starting at LBA 21 — that's more than one 2048-byte logical sector
+        // (ceil(12345/2048) = 7 sectors), so this also exercises the
+        // multi-sector / partial-last-sector path, not just a single read.
+        // Fill LBA 21..27 with a distinctive, position-dependent byte pattern
+        // (not all zero) so a wrong offset or truncated copy would produce a
+        // detectably wrong result rather than accidentally passing.
+        for (int lba = 21; lba <= 27; lba++) {
+            byte[] sector = source.sector(lba);
+            for (int i = 0; i < SECTOR_SIZE; i++) {
+                sector[i] = (byte) (lba * 31 + i);
+            }
+        }
+
+        Iso9660FileSystem fs = Iso9660FileSystem.open(source);
+        Iso9660DirectoryRecord bootFile = fs.findInRootDirectory("1ST_READ.BIN");
+
+        byte[] contents = fs.readFile(bootFile);
+
+        assertEquals(12345, contents.length);
+        // First byte: LBA 21, offset 0.
+        assertEquals((byte) (21 * 31), contents[0]);
+        // Last byte: falls in LBA 27 (12345 / 2048 = 6 sectors + a partial 7th),
+        // at offset (12345 - 1) - 6*2048 within that final sector.
+        int lastSectorOffset = (12345 - 1) - 6 * SECTOR_SIZE;
+        assertEquals((byte) (27 * 31 + lastSectorOffset), contents[12345 - 1]);
+    }
+
+    @Test
     void rejectsANonIso9660Sector() {
         MemorySectorSource source = new MemorySectorSource(24); // LBA 16 stays all-zero — not a valid PVD
 

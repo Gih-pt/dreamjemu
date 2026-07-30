@@ -111,6 +111,34 @@ public final class Iso9660FileSystem {
         throw new IOException("File not found in root directory: \"" + fileName + "\"");
     }
 
+    /**
+     * Reads a file's entire contents given its directory entry (as returned
+     * by {@link #findInRootDirectory}) — the actual disc-reading half of
+     * loading a Dreamcast boot executable into RAM. Writing those bytes into
+     * a system's memory bus and pointing the SH-4 at them is deliberately
+     * out of scope here (that's core-system/core-cpu-sh4's job, not
+     * core-gdrom's) — this only turns a resolved (LBA, size) pair into the
+     * actual bytes at that location.
+     *
+     * @param file a record previously returned by this same filesystem instance
+     *             (its extent must be valid against this filesystem's {@link SectorSource})
+     */
+    public byte[] readFile(Iso9660DirectoryRecord file) throws IOException {
+        int length = Math.toIntExact(file.dataLength());
+        byte[] out = new byte[length];
+        long sectorCount = (file.dataLength() + LogicalSectorReader.LOGICAL_SECTOR_SIZE - 1)
+                / LogicalSectorReader.LOGICAL_SECTOR_SIZE;
+        byte[] sectorBuf = new byte[LogicalSectorReader.LOGICAL_SECTOR_SIZE];
+
+        for (long i = 0; i < sectorCount; i++) {
+            sectors.readSector(file.extentLba() + i, sectorBuf);
+            int destOffset = (int) (i * LogicalSectorReader.LOGICAL_SECTOR_SIZE);
+            int copyLength = Math.min(LogicalSectorReader.LOGICAL_SECTOR_SIZE, length - destOffset);
+            System.arraycopy(sectorBuf, 0, out, destOffset, copyLength);
+        }
+        return out;
+    }
+
     private static String stripVersionSuffix(String identifier) {
         int semicolon = identifier.indexOf(';');
         return semicolon >= 0 ? identifier.substring(0, semicolon) : identifier;

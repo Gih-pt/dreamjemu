@@ -13,4 +13,9 @@ application {
 
 dependencies {
     implementation(project(":core-gdrom"))
+    // Added for the boot-load-and-jump step: HleBootLoader (core-system)
+    // writes the located boot file into a real SystemBus, and Sh4Cpu
+    // (core-cpu-sh4) is what actually gets pointed at the result.
+    implementation(project(":core-system"))
+    implementation(project(":core-cpu-sh4"))
 }
