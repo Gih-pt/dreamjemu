@@ -75,7 +75,14 @@ class Iso9660FileSystemTest {
      * size — entirely fictional test data.
      */
     private static MemorySectorSource buildSyntheticDisc() {
-        MemorySectorSource source = new MemorySectorSource(24);
+        // 28, not 24: the boot file entry below declares 12345 bytes starting
+        // at LBA 21, which readFile() (see readsTheBootFilesFullContentsAcrossMultipleSectors)
+        // actually reads in full - that needs sectors up through LBA 27
+        // (ceil(12345/2048) = 7 sectors, 21..27), so the backing array must
+        // cover at least that range or readSector() throws
+        // ArrayIndexOutOfBoundsException. 24 was enough back when this method
+        // was only used for metadata-only lookups (LBA/size, never content).
+        MemorySectorSource source = new MemorySectorSource(28);
 
         byte[] pvd = source.sector(16);
         pvd[0] = 1; // Primary Volume Descriptor type
