@@ -122,37 +122,67 @@ public final class Main {
         System.out.println("This does not run a real game to completion yet; see docs/STATUS.md.");
     }
 
+    /**
+     * Dreamcast GD-ROM images (in every format this project reads) commonly
+     * contain more than one non-audio track: a small "single-density" area
+     * first (present only so ordinary CD-ROM drives see a valid-looking
+     * disc — it is NOT the game), then an audio track, then the real
+     * "high-density" game data as the LAST track on the disc. Picking the
+     * first data track (an earlier, naive version of this code did exactly
+     * that) silently opens the wrong, mostly-empty filesystem instead of the
+     * one containing the boot file — see docs/STATUS.md's "Known
+     * limitations fixed" note for how this was diagnosed against a real
+     * Sonic Adventure dump (its single-density track only contains the
+     * standard ISO9660 ABSTRACT.TXT/BIBLIOGR.TXT/COPYRIGH.TXT placeholder
+     * files and an EXTRA directory — no boot file at all). Picking the LAST
+     * data track instead is the same convention real Dreamcast tools and
+     * emulators (redream, Flycast, etc.) already rely on.
+     */
     private static OpenDataTrack openGdiDataTrack(Path path) throws IOException {
         GdiImage image = GdiImage.load(path);
+        GdiTrack lastDataTrack = null;
         for (GdiTrack track : image.tracks()) {
             if (track.type() == GdiTrackType.DATA) {
-                return new OpenDataTrack(new LogicalSectorReader(image::readSector, track.startLba(), track.sectorSize()), image);
+                lastDataTrack = track;
             }
         }
-        image.close();
-        throw new IOException("No data track found in " + path);
+        if (lastDataTrack == null) {
+            image.close();
+            throw new IOException("No data track found in " + path);
+        }
+        return new OpenDataTrack(new LogicalSectorReader(image::readSector, lastDataTrack.startLba(), lastDataTrack.sectorSize()), image);
     }
 
+    /** See {@link #openGdiDataTrack} — same "pick the last data track" reasoning applies here. */
     private static OpenDataTrack openCueBinDataTrack(Path path) throws IOException {
         CueBinImage image = CueBinImage.load(path);
+        CueTrack lastDataTrack = null;
         for (CueTrack track : image.tracks()) {
             if (!track.mode().isAudio()) {
-                return new OpenDataTrack(new LogicalSectorReader(image::readSector, track.startLba(), track.sectorSize()), image);
+                lastDataTrack = track;
             }
         }
-        image.close();
-        throw new IOException("No data track found in " + path);
+        if (lastDataTrack == null) {
+            image.close();
+            throw new IOException("No data track found in " + path);
+        }
+        return new OpenDataTrack(new LogicalSectorReader(image::readSector, lastDataTrack.startLba(), lastDataTrack.sectorSize()), image);
     }
 
+    /** See {@link #openGdiDataTrack} — same "pick the last data track" reasoning applies here. */
     private static OpenDataTrack openCdiDataTrack(Path path) throws IOException {
         CdiImage image = CdiImage.load(path);
+        CdiTrack lastDataTrack = null;
         for (CdiTrack track : image.tracks()) {
             if (track.mode() != CdiTrackMode.CDDA) {
-                return new OpenDataTrack(new LogicalSectorReader(image::readSector, track.startLba(), track.sectorSize()), image);
+                lastDataTrack = track;
             }
         }
-        image.close();
-        throw new IOException("No data track found in " + path);
+        if (lastDataTrack == null) {
+            image.close();
+            throw new IOException("No data track found in " + path);
+        }
+        return new OpenDataTrack(new LogicalSectorReader(image::readSector, lastDataTrack.startLba(), lastDataTrack.sectorSize()), image);
     }
 
     private static void printIpBinHeader(IpBinHeader ipBin) {
