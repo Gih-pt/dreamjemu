@@ -184,6 +184,35 @@ public final class Main {
         } catch (Exception e) {
             String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             System.out.println("Could not locate the boot file: " + message);
+            printRootDirectoryDiagnostics(dataTrack);
+        }
+    }
+
+    /**
+     * Diagnostic aid for when {@link Iso9660FileSystem#findInRootDirectory}
+     * fails against a real disc image: prints the root directory's own
+     * extent and every entry actually found in it, so a genuine mismatch
+     * (wrong name, empty/garbled listing, wrong extent) can be told apart
+     * from a real parsing bug without guessing. Deliberately swallows its
+     * own failures — this only runs after something already went wrong, and
+     * shouldn't itself crash the tool or hide the original error above.
+     */
+    private static void printRootDirectoryDiagnostics(SectorSource dataTrack) {
+        System.out.println();
+        System.out.println("--- diagnostic: root directory contents ---");
+        try {
+            Iso9660FileSystem fs = Iso9660FileSystem.open(dataTrack);
+            Iso9660DirectoryRecord root = fs.rootDirectory();
+            System.out.println("Root directory extent: LBA " + root.extentLba() + ", " + root.dataLength() + " bytes");
+            var entries = fs.listRootDirectory();
+            System.out.println("Entries found: " + entries.size());
+            for (Iso9660DirectoryRecord entry : entries) {
+                System.out.println("  " + (entry.isDirectory() ? "[DIR] " : "       ") + entry.identifier()
+                        + "  (LBA " + entry.extentLba() + ", " + entry.dataLength() + " bytes)");
+            }
+        } catch (Exception e) {
+            System.out.println("(diagnostic listing also failed: "
+                    + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()) + ")");
         }
     }
 
