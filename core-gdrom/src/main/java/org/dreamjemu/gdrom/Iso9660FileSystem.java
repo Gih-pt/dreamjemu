@@ -23,6 +23,26 @@ import java.util.List;
  * console/BIOS file. Locating and reading the boot file's actual bytes
  * (loading it into RAM) is a follow-up step, not implemented here — this
  * class only resolves a file name to its extent (LBA + size).
+ *
+ * <b>Dreamcast GD-ROM "high-density area" LBA rebasing (fixed 2026-07-31,
+ * found via a real disc):</b> a GD-ROM's high-density area (the track
+ * holding the actual game data, as opposed to the small CD-compatible
+ * "single-density" area) always starts at absolute physical LBA 45000 —
+ * confirmed against dreamcast.wiki's GDI format page ("Track 3 always
+ * starts at an LBA of 45000") and Redump's GD-ROM dumping documentation.
+ * Every {@code extentLba} value stored inside that area's own ISO9660
+ * directory records (root directory, every file) is written in terms of
+ * that same absolute numbering, regardless of which container format
+ * (GDI, CUE/BIN, CDI) the track was extracted into. GDI already encodes
+ * tracks at their true absolute LBA, so this falls out for free there —
+ * but CUE/BIN and CDI extraction renumbers each track from 0, so reading
+ * those {@code extentLba} values directly (as an earlier version of this
+ * class did) looks for sectors ~45000 too far into the track and finds
+ * nothing. This class detects the high-density area by its always-large
+ * root-directory {@code extentLba} (below {@link #GD_ROM_HIGH_DENSITY_AREA_LBA},
+ * which no plausible track-relative value would ever reach) and, only
+ * then, subtracts that base from every {@code extentLba} it reads — for a
+ * plain single-session disc (this constant never applies), nothing changes.
  */
 public final class Iso9660FileSystem {
 
@@ -32,18 +52,33 @@ public final class Iso9660FileSystem {
     private static final String STANDARD_IDENTIFIER = "CD001";
     private static final int ROOT_DIRECTORY_RECORD_OFFSET = 156;
 
+    /**
+     * Absolute physical LBA where a Dreamcast GD-ROM's high-density area
+     * (the real game data) always starts — see the class Javadoc. Used both
+     * as the rebase amount and as the detection threshold: a root
+     * directory's raw, on-disc {@code extentLba} is only ever this large
+     * when it belongs to a high-density area using disc-absolute
+     * addressing; a track-relative filesystem (the low-density area, or any
+     * plain single-session disc) has no plausible reason to reach it.
+     */
+    private static final long GD_ROM_HIGH_DENSITY_AREA_LBA = 45000;
+
     private final SectorSource sectors;
     private final Iso9660DirectoryRecord rootDirectory;
+    private final long volumeBaseLba;
 
-    private Iso9660FileSystem(SectorSource sectors, Iso9660DirectoryRecord rootDirectory) {
+    private Iso9660FileSystem(SectorSource sectors, Iso9660DirectoryRecord rootDirectory, long volumeBaseLba) {
         this.sectors = sectors;
         this.rootDirectory = rootDirectory;
+        this.volumeBaseLba = volumeBaseLba;
     }
 
     /**
      * Opens an ISO9660 filesystem by reading and validating the Primary
-     * Volume Descriptor at LBA 16 (a fixed offset defined by the standard),
-     * and extracting its embedded root directory record.
+     * Volume Descriptor at LBA 16 (a fixed offset defined by the standard,
+     * always track-relative — never subject to the high-density rebase
+     * described in the class Javadoc, since it isn't a value read from a
+     * directory record), and extracting its embedded root directory record.
      *
      * @param sectors a reader returning normalized 2048-byte logical sectors
      *                (see {@link LogicalSectorReader}) — NOT raw disc sectors
@@ -60,8 +95,10 @@ public final class Iso9660FileSystem {
                     PRIMARY_VOLUME_DESCRIPTOR_LBA + " (type=" + typeCode + ", standard identifier=\"" + standardId + "\")");
         }
 
-        Iso9660DirectoryRecord root = parseDirectoryRecord(pvd, ROOT_DIRECTORY_RECORD_OFFSET);
-        return new Iso9660FileSystem(sectors, root);
+        Iso9660DirectoryRecord rawRoot = parseDirectoryRecord(pvd, ROOT_DIRECTORY_RECORD_OFFSET);
+        long volumeBaseLba = rawRoot.extentLba() >= GD_ROM_HIGH_DENSITY_AREA_LBA ? GD_ROM_HIGH_DENSITY_AREA_LBA : 0;
+        Iso9660DirectoryRecord root = rebase(rawRoot, volumeBaseLba);
+        return new Iso9660FileSystem(sectors, root, volumeBaseLba);
     }
 
     public Iso9660DirectoryRecord rootDirectory() {
@@ -84,7 +121,7 @@ public final class Iso9660FileSystem {
                 if (recordLength == 0) {
                     break; // padding to the end of this sector — no more records here
                 }
-                Iso9660DirectoryRecord record = parseDirectoryRecord(sector, offset);
+                Iso9660DirectoryRecord record = rebase(parseDirectoryRecord(sector, offset), volumeBaseLba);
                 if (!record.identifier().isEmpty()) {
                     entries.add(record);
                 }
@@ -142,6 +179,14 @@ public final class Iso9660FileSystem {
     private static String stripVersionSuffix(String identifier) {
         int semicolon = identifier.indexOf(';');
         return semicolon >= 0 ? identifier.substring(0, semicolon) : identifier;
+    }
+
+    /** Subtracts {@code baseLba} from a record's {@code extentLba} — see the class Javadoc's "LBA rebasing" note. A no-op when {@code baseLba} is 0. */
+    private static Iso9660DirectoryRecord rebase(Iso9660DirectoryRecord record, long baseLba) {
+        if (baseLba == 0) {
+            return record;
+        }
+        return new Iso9660DirectoryRecord(record.identifier(), record.extentLba() - baseLba, record.dataLength(), record.isDirectory());
     }
 
     private static Iso9660DirectoryRecord parseDirectoryRecord(byte[] data, int offset) {

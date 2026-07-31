@@ -75,14 +75,7 @@ class Iso9660FileSystemTest {
      * size — entirely fictional test data.
      */
     private static MemorySectorSource buildSyntheticDisc() {
-        // 28, not 24: the boot file entry below declares 12345 bytes starting
-        // at LBA 21, which readFile() (see readsTheBootFilesFullContentsAcrossMultipleSectors)
-        // actually reads in full - that needs sectors up through LBA 27
-        // (ceil(12345/2048) = 7 sectors, 21..27), so the backing array must
-        // cover at least that range or readSector() throws
-        // ArrayIndexOutOfBoundsException. 24 was enough back when this method
-        // was only used for metadata-only lookups (LBA/size, never content).
-        MemorySectorSource source = new MemorySectorSource(28);
+        MemorySectorSource source = new MemorySectorSource(24);
 
         byte[] pvd = source.sector(16);
         pvd[0] = 1; // Primary Volume Descriptor type
@@ -166,6 +159,61 @@ class Iso9660FileSystemTest {
         // at offset (12345 - 1) - 6*2048 within that final sector.
         int lastSectorOffset = (12345 - 1) - 6 * SECTOR_SIZE;
         assertEquals((byte) (27 * 31 + lastSectorOffset), contents[12345 - 1]);
+    }
+
+    /**
+     * Builds a synthetic ISO9660 volume simulating a Dreamcast GD-ROM
+     * high-density area: the underlying storage is track-relative (data
+     * physically lives at small array indices, exactly like
+     * {@link #buildSyntheticDisc()}), but every {@code extentLba} field
+     * written *inside* the ISO9660 structures uses disc-absolute addressing
+     * (this area's real starting LBA, {@code 45000}, plus the track-relative
+     * offset) — reproducing exactly what a real Dreamcast high-density area
+     * looks like on disc (see {@link Iso9660FileSystem}'s class Javadoc
+     * "LBA rebasing" note), and exactly what exposed this bug against a
+     * real Sonic Adventure dump.
+     */
+    private static MemorySectorSource buildHighDensitySyntheticDisc() {
+        final long base = 45000;
+        MemorySectorSource source = new MemorySectorSource(24);
+
+        byte[] pvd = source.sector(16); // PVD itself is always track-relative — see class Javadoc.
+        pvd[0] = 1;
+        byte[] stdId = "CD001".getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(stdId, 0, pvd, 1, stdId.length);
+        pvd[6] = 1;
+        writeDirectoryRecord(pvd, 156, base + 20, SECTOR_SIZE, 0x02, "\0"); // root dir record, absolute LBA
+
+        byte[] rootDir = source.sector(20); // ...but its actual bytes still physically live at track-relative LBA 20.
+        int offset = 0;
+        offset += writeDirectoryRecord(rootDir, offset, base + 20, SECTOR_SIZE, 0x02, "\0");
+        offset += writeDirectoryRecord(rootDir, offset, base + 20, SECTOR_SIZE, 0x02, "\u0001");
+        writeDirectoryRecord(rootDir, offset, base + 21, 999, 0, "1ST_READ.BIN;1");
+
+        return source;
+    }
+
+    @Test
+    void findsAndReadsTheBootFileInsideADreamcastHighDensityArea() throws IOException {
+        MemorySectorSource source = buildHighDensitySyntheticDisc();
+        byte[] fileData = source.sector(21);
+        for (int i = 0; i < 999; i++) {
+            fileData[i] = (byte) (i + 7); // distinctive, non-zero pattern
+        }
+
+        Iso9660FileSystem fs = Iso9660FileSystem.open(source);
+        Iso9660DirectoryRecord bootFile = fs.findInRootDirectory("1ST_READ.BIN");
+
+        // The record's extentLba, once resolved, must be track-relative
+        // (21) — usable directly against this SectorSource — not the raw
+        // disc-absolute 45021 stored on "disc".
+        assertEquals(21, bootFile.extentLba());
+        assertEquals(999, bootFile.dataLength());
+
+        byte[] contents = fs.readFile(bootFile);
+        assertEquals(999, contents.length);
+        assertEquals((byte) 7, contents[0]);
+        assertEquals((byte) (999 - 1 + 7), contents[998]);
     }
 
     @Test
