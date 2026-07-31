@@ -84,6 +84,12 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shad;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shld;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.tasB;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.stsLMach;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.stsLMacl;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.stsLPr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.ldsLMach;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.ldsLMacl;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.ldsLPr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcl;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rte;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
@@ -1706,6 +1712,115 @@ class Sh4CpuTest {
 
         assertFalse(cpu.tFlag(), "the byte read was NOT zero");
         assertEquals((byte) 0x81, bus.read8(50), "MSB forced to 1, low bits preserved");
+    }
+
+    @Test
+    void stsLPrDecrementsThenStoresPrOnTheStack() {
+        // The classic function-prologue instruction: STS.L PR,@-R15 (R15 = stack pointer
+        // convention). Verified against a real Sonic Adventure GD-ROM dump: this is the exact
+        // instruction the SH-4 interpreter hit (as PC=0x8C0100A2, opcode 0x4F22) 16 real
+        // instructions into the game's actual boot code, before this was implemented.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, stsLPr(15)); // STS.L PR,@-R15
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+        cpu.pr = 0x12345678;
+
+        cpu.step();
+
+        assertEquals(96, cpu.r[15], "R15 should be decremented by 4 before the store");
+        assertEquals(0x12345678, bus.read32(96), "PR's value should be stored at the new R15");
+    }
+
+    @Test
+    void stsLMachDecrementsThenStoresMach() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, stsLMach(15));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+        cpu.mach = 0x11223344;
+
+        cpu.step();
+
+        assertEquals(96, cpu.r[15]);
+        assertEquals(0x11223344, bus.read32(96));
+    }
+
+    @Test
+    void stsLMaclDecrementsThenStoresMacl() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, stsLMacl(15));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+        cpu.macl = 0x55667788;
+
+        cpu.step();
+
+        assertEquals(96, cpu.r[15]);
+        assertEquals(0x55667788, bus.read32(96));
+    }
+
+    @Test
+    void ldsLPrLoadsThenIncrementsRn() {
+        // The mirror-image function-epilogue instruction: LDS.L @R15+,PR.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldsLPr(15)); // LDS.L @R15+,PR
+        bus.write32(100, 0x12345678);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+
+        cpu.step();
+
+        assertEquals(0x12345678, cpu.pr, "PR should hold the loaded value");
+        assertEquals(104, cpu.r[15], "R15 should be incremented by 4 AFTER the load");
+    }
+
+    @Test
+    void ldsLMachLoadsThenIncrementsRn() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldsLMach(15));
+        bus.write32(100, 0x11223344);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+
+        cpu.step();
+
+        assertEquals(0x11223344, cpu.mach);
+        assertEquals(104, cpu.r[15]);
+    }
+
+    @Test
+    void ldsLMaclLoadsThenIncrementsRn() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldsLMacl(15));
+        bus.write32(100, 0x55667788);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+
+        cpu.step();
+
+        assertEquals(0x55667788, cpu.macl);
+        assertEquals(104, cpu.r[15]);
+    }
+
+    @Test
+    void stsLPrThenLdsLPrRoundTripsThroughTheStack() {
+        // The real-world pattern this pair exists for: save PR in a function's prologue,
+        // do something (here, just clobber PR to prove the round trip is real and not a
+        // no-op), then restore it in the epilogue immediately before RTS.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        int pc = write(bus, 0, stsLPr(15));   // STS.L PR,@-R15
+        write(bus, pc, ldsLPr(15));            // LDS.L @R15+,PR
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+        cpu.pr = 0xCAFEBABE;
+
+        cpu.step(); // STS.L PR,@-R15
+        cpu.pr = 0; // clobber PR to prove the next step actually reloads it from memory
+        cpu.step(); // LDS.L @R15+,PR
+
+        assertEquals(0xCAFEBABE, cpu.pr, "PR should be restored to its original value");
+        assertEquals(100, cpu.r[15], "R15 should be back where it started");
     }
 
     private static int write(SimpleTestBus bus, int address, int opcode) {

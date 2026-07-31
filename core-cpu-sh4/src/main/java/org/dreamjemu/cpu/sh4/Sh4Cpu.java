@@ -700,6 +700,42 @@ public class Sh4Cpu {
                 }
             }
             setT(qFlag == mFlag);
+        } else if ((opcode & 0xF0FF) == 0x4002) {
+            // STS.L MACH,@-Rn — pre-decrement store: Rn -= 4 FIRST, then MACH is written at
+            // the new (decremented) Rn. Same "predecrement, then store" shape as MOV.L Rm,@-Rn
+            // above, just storing a system register instead of a general-purpose one.
+            r[n] -= 4;
+            bus.write32(Integer.toUnsignedLong(r[n]), mach);
+        } else if ((opcode & 0xF0FF) == 0x4012) {
+            // STS.L MACL,@-Rn — same as STS.L MACH,@-Rn above, for MACL.
+            r[n] -= 4;
+            bus.write32(Integer.toUnsignedLong(r[n]), macl);
+        } else if ((opcode & 0xF0FF) == 0x4022) {
+            // STS.L PR,@-Rn — same shape again, for PR (the subroutine return address). This
+            // is the classic SH-4 function-PROLOGUE instruction: "save my return address onto
+            // the stack before I call anything else and clobber PR myself" — almost always the
+            // very first or second instruction of any real function that itself calls another.
+            r[n] -= 4;
+            bus.write32(Integer.toUnsignedLong(r[n]), pr);
+        } else if ((opcode & 0xF0FF) == 0x4006) {
+            // LDS.L @Rn+,MACH — post-increment load: MACH = value at Rn, THEN Rn += 4. Same
+            // "load, then post-increment" shape as MOV.L @Rm+,Rn above, loading into a system
+            // register instead of a general-purpose one. Confusingly, this "load" family
+            // addresses its pointer register through the "n" field (not "m") despite the
+            // mnemonic's "@Rn+" looking like a source operand — verified against the
+            // authoritative SH opcode table alongside every other opcode here.
+            mach = bus.read32(Integer.toUnsignedLong(r[n]));
+            r[n] += 4;
+        } else if ((opcode & 0xF0FF) == 0x4016) {
+            // LDS.L @Rn+,MACL — same as LDS.L @Rn+,MACH above, for MACL.
+            macl = bus.read32(Integer.toUnsignedLong(r[n]));
+            r[n] += 4;
+        } else if ((opcode & 0xF0FF) == 0x4026) {
+            // LDS.L @Rn+,PR — same shape again, for PR. The classic SH-4 function-EPILOGUE
+            // instruction: "restore the return address I saved earlier" — the mirror image of
+            // STS.L PR,@-Rn above, and normally followed shortly by RTS.
+            pr = bus.read32(Integer.toUnsignedLong(r[n]));
+            r[n] += 4;
         } else {
             throw new UnsupportedOperationException(String.format(
                     "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));

@@ -378,4 +378,28 @@ final class Sh4Asm {
     static int tasB(int n) {
         return 0x401B | (n << 8);
     }
+
+    static int stsLMach(int n) {
+        return 0x4002 | (n << 8); // STS.L MACH,@-Rn
+    }
+
+    static int stsLMacl(int n) {
+        return 0x4012 | (n << 8); // STS.L MACL,@-Rn
+    }
+
+    static int stsLPr(int n) {
+        return 0x4022 | (n << 8); // STS.L PR,@-Rn
+    }
+
+    static int ldsLMach(int n) {
+        return 0x4006 | (n << 8); // LDS.L @Rn+,MACH
+    }
+
+    static int ldsLMacl(int n) {
+        return 0x4016 | (n << 8); // LDS.L @Rn+,MACL
+    }
+
+    static int ldsLPr(int n) {
+        return 0x4026 | (n << 8); // LDS.L @Rn+,PR
+    }
 }
