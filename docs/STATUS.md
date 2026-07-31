@@ -1,6 +1,6 @@
 # Project Status
 
-*Last updated: 2026-07-31 (core-gdrom: fixed a second bug found via the same real Sonic Adventure GD-ROM dump — `Iso9660FileSystem` now correctly rebases the disc-absolute LBA addressing used by a Dreamcast high-density area's own ISO9660 directory records, instead of misreading `extentLba` values as track-relative). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
+*Last updated: 2026-07-31 (core-gdrom: fixed a real, project-owner-run `./gradlew :core-gdrom:test` failure — `Iso9660FileSystemTest`'s synthetic-disc fixture array was sized too small for the multi-sector `readFile` test added the same day; test-fixture-only, `Iso9660FileSystem` itself was correct. Also, earlier the same day: fixed two real bugs found via an actual Sonic Adventure GD-ROM dump — GDI/CUE-BIN/CDI data-track selection now picks the LAST data track instead of the first, and `Iso9660FileSystem` now correctly rebases the disc-absolute LBA addressing used by a Dreamcast high-density area's own directory records). Update this file whenever a contribution meaningfully changes what's implemented — see `CONTRIBUTING.md`.*
 
 ## Current state: bootstrap complete; system bus, disc reading, native packaging, and first CPU core work implemented
 

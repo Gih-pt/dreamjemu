@@ -75,7 +75,15 @@ class Iso9660FileSystemTest {
      * size — entirely fictional test data.
      */
     private static MemorySectorSource buildSyntheticDisc() {
-        MemorySectorSource source = new MemorySectorSource(24);
+        // 28, not 24: the boot file below is declared as 12345 bytes (7
+        // sectors, LBA 21..27) — readsTheBootFilesFullContentsAcrossMultipleSectors
+        // needs every one of those sectors to actually exist in the backing
+        // array, or source.sector(27) throws ArrayIndexOutOfBoundsException
+        // (a real bug an earlier version of this file had, caught by an
+        // actual `./gradlew :core-gdrom:test` run on 2026-07-31 — the
+        // standalone sandbox harness used up to that point couldn't have
+        // caught it, since it wasn't running these exact JUnit tests).
+        MemorySectorSource source = new MemorySectorSource(28);
 
         byte[] pvd = source.sector(16);
         pvd[0] = 1; // Primary Volume Descriptor type
