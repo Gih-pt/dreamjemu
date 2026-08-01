@@ -151,8 +151,11 @@ public final class Main {
         System.out.println("the parsed IP.BIN boot header, locates the boot file it names within the");
         System.out.println("disc's ISO9660 root directory, loads its bytes into a real system bus at");
         System.out.println("the documented Dreamcast boot address, and steps the SH-4 from there until");
-        System.out.println("it hits something not implemented yet. Point it at a disc image you already");
-        System.out.println("legally own - this project does not provide or link to any.");
+        System.out.println("it hits something not implemented yet, or a stable repeating loop is detected");
+        System.out.println("(see LoopDetector — stops early with a summary rather than exhausting the step");
+        System.out.println("budget on what's often just a slow, legitimate memset/.bss-clear loop). Point");
+        System.out.println("it at a disc image you already legally own - this project does not provide or");
+        System.out.println("link to any.");
         System.out.println();
         System.out.println("This does not run a real game to completion yet; see docs/STATUS.md.");
         System.out.println();
@@ -321,14 +324,44 @@ public final class Main {
         // original budget with no unimplemented instruction hit at all — genuinely
         // encouraging, but it means 100,000 wasn't a real ceiling, just an arbitrary one.
         final int maxSteps = 5_000_000;
+
+        // Added 2026-07-31: that same real dump then ran the ENTIRE 5,000,000-step budget
+        // without stopping — a --log-level TRACE run revealed why: a tight, stable 5-instruction
+        // loop (almost certainly a crt0-style byte-at-a-time .bss-clearing loop — legitimate,
+        // finite work, just far too slow to finish within any reasonable step budget). Detecting
+        // that early (instead of silently burning the whole budget, or a TRACE log, on identical
+        // repeated output) is what LoopDetector is for — see its Javadoc for the algorithm.
+        LoopDetector loopDetector = new LoopDetector(1000, 1_000_000);
+        final int ringCapacity = 4096; // generous upper bound on a loop body we can still fully display
+        int[] pcRing = new int[ringCapacity];
+        int[] opcodeRing = new int[ringCapacity];
+        int ringPushes = 0;
+
         int steps = 0;
+        boolean loopDetected = false;
         try {
             for (; steps < maxSteps; steps++) {
+                int pcBeforeStep = cpu.pc;
+                int opcodeBeforeStep = bus.read16(Integer.toUnsignedLong(pcBeforeStep)) & 0xFFFF;
+                pcRing[ringPushes % ringCapacity] = pcBeforeStep;
+                opcodeRing[ringPushes % ringCapacity] = opcodeBeforeStep;
+                ringPushes++;
+
+                if (loopDetector.observe(pcBeforeStep, steps)) {
+                    loopDetected = true;
+                    break;
+                }
                 cpu.step();
             }
-            System.out.println("Executed " + steps + " steps without hitting an unimplemented instruction.");
-            System.out.println("(Reached the step budget rather than a real stopping condition - this");
-            System.out.println(" interpreter has no way yet to detect an intentional halt/idle loop.)");
+
+            if (loopDetected) {
+                printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps);
+            } else {
+                System.out.println("Executed " + steps + " steps without hitting an unimplemented instruction.");
+                System.out.println("(Reached the step budget rather than a real stopping condition - this");
+                System.out.println(" interpreter found no stable repeating loop either; genuinely new code");
+                System.out.println(" the whole way, or a loop longer than LoopDetector's repeat threshold.)");
+            }
         } catch (UnsupportedOperationException | IllegalStateException e) {
             System.out.println("Stopped after " + steps + " step(s) at PC=0x" + Integer.toHexString(cpu.pc) + ":");
             System.out.println("  " + e.getMessage());
@@ -336,5 +369,40 @@ public final class Main {
             System.out.println("hardware registers, or an exception/interrupt mechanism (TRAPA, MMU) this");
             System.out.println("interpreter doesn't implement yet. See docs/STATUS.md \"Not started yet\".");
         }
+    }
+
+    /**
+     * Reports a {@link LoopDetector}-confirmed stable cycle: the loop's period and how many
+     * consecutive repeats confirmed it, plus (PC, opcode) for every instruction in one full
+     * period, reconstructed from the ring buffer {@code attemptMinimalBoot} kept alongside
+     * stepping — {@link LoopDetector} itself tracks only PC-to-step-index mappings, not the
+     * PC sequence in order, so it can't reconstruct the loop body on its own.
+     */
+    private static void printLoopDetected(LoopDetector loopDetector, int[] pcRing, int[] opcodeRing,
+                                           int ringPushes, int ringCapacity, int steps) {
+        long period = loopDetector.period();
+        System.out.println("Detected a stable repeating loop after " + steps + " total steps:");
+        System.out.println("  Period: " + period + " instruction(s), confirmed over "
+                + loopDetector.consecutiveRepeats() + " consecutive repeats.");
+
+        long available = Math.min(ringPushes, ringCapacity);
+        if (period <= 0 || period > available) {
+            System.out.println("  (Loop body too long to display fully — period is " + period
+                    + " instructions, only the last " + available + " are kept.)");
+        } else {
+            System.out.println("  Loop body:");
+            for (long i = period - 1; i >= 0; i--) {
+                int index = (int) (((long) ringPushes - 1 - i) % ringCapacity);
+                if (index < 0) {
+                    index += ringCapacity;
+                }
+                System.out.println(String.format("    PC=0x%08X opcode=0x%04X", pcRing[index], opcodeRing[index]));
+            }
+        }
+
+        System.out.println("This may be legitimate but slow work (e.g. a byte-at-a-time memset/.bss-clear");
+        System.out.println("loop — see docs/STATUS.md) or a genuine spin-wait on hardware state this");
+        System.out.println("interpreter doesn't model yet (VBlank, DMA, timers — none exist so far).");
+        System.out.println("Stopped early rather than exhausting the step budget on repeated output.");
     }
 }
