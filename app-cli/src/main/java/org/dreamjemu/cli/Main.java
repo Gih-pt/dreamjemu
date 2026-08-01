@@ -275,7 +275,10 @@ public final class Main {
                 + " (real hardware's documented \"" + ipBin.bootFilename() + "\" load address).");
 
         Sh4Cpu cpu = new Sh4Cpu(bus, entryPc);
-        final int maxSteps = 100_000;
+        // Raised from 100,000 on 2026-07-31: a real Sonic Adventure dump reached that
+        // original budget with no unimplemented instruction hit at all — genuinely
+        // encouraging, but it means 100,000 wasn't a real ceiling, just an arbitrary one.
+        final int maxSteps = 5_000_000;
         int steps = 0;
         try {
             for (; steps < maxSteps; steps++) {

@@ -70,8 +70,27 @@ public class Sh4Cpu {
     /** Address of the next instruction to fetch and execute. */
     public int pc;
 
-    /** Procedure register (subroutine return address). Not yet written by any implemented instruction. */
+    /** Procedure register (subroutine return address). Written by {@code BSR}/{@code JSR}/{@code STS.L PR,@-Rn}; read by {@code RTS}/{@code LDS.L @Rn+,PR}. */
     public int pr;
+
+    /**
+     * Vector Base Register — real hardware adds this to a fixed offset to find where to
+     * jump on an exception/interrupt (e.g. {@code TRAPA} always jumps to {@code VBR + 0x100}).
+     * Starts at 0, same as real hardware out of reset — and, since this project has no BIOS
+     * to set it up, {@code TRAPA} will legitimately fail (jumping into unmapped memory) until
+     * whatever code is running sets VBR itself via {@code LDC Rn,VBR}, exactly like real
+     * boot/runtime-startup code does before it relies on exceptions working.
+     */
+    public int vbr;
+
+    /**
+     * TRAPA exception register — real hardware sets this to the {@code TRAPA} instruction's
+     * 8-bit immediate, shifted left 2 bits, so a real exception handler (jumped to via
+     * {@link #vbr}) can tell which specific trap was requested. Not read by anything in this
+     * interpreter yet (there's no handler to read it) — kept for the same reason {@link #ssr}/
+     * {@link #spc} are: real, correct state for whenever a caller needs to inspect it.
+     */
+    public int tra;
 
     /**
      * Saved Status Register — on real hardware, the exception/interrupt entry hardware
@@ -736,6 +755,39 @@ public class Sh4Cpu {
             // STS.L PR,@-Rn above, and normally followed shortly by RTS.
             pr = bus.read32(Integer.toUnsignedLong(r[n]));
             r[n] += 4;
+        } else if ((opcode & 0xF0FF) == 0x402E) {
+            // LDC Rn,VBR — sets the Vector Base Register that TRAPA (and every other
+            // exception/interrupt) jumps relative to. Real boot/runtime-startup code sets this
+            // very early, before relying on TRAPA or interrupts working at all — see VBR's Javadoc.
+            vbr = r[n];
+        } else if ((opcode & 0xF0FF) == 0x0022) {
+            // STC VBR,Rn — reads VBR back into a general-purpose register. Mirror image of
+            // LDC Rn,VBR above; added alongside it purely for symmetry/testability, the same
+            // way this project has consistently implemented STS.L/LDS.L pairs together.
+            r[n] = vbr;
+        } else if ((opcode & 0xFF00) == 0xC300) {
+            // TRAPA #imm — software exception. Unlike every branch above, TRAPA has NO delay
+            // slot (it takes effect immediately) and directly changes PC itself, so — uniquely
+            // among the instructions in this method — it returns its own target instead of
+            // falling through to `return nextPc` at the bottom.
+            //
+            // Confirmed against the authoritative SH opcode table (binutils/QEMU's sh4-dis)
+            // used for every other opcode added this session: encoding "11000011i8*1", i.e.
+            // 0xC300 | imm8.
+            //
+            // This is the actual mechanism real HLE boot/syscall code uses to invoke
+            // BIOS-equivalent functionality (see docs/ROADMAP.md) — but this interpreter has no
+            // exception HANDLER (no vector table, no BIOS to have installed one), so all this
+            // does, correctly, is perform the hardware-defined entry sequence (save SR/return
+            // address, set TRA, jump to VBR+0x100) and stop there; whatever's mapped at that
+            // address (nothing, unless the running code set VBR itself and put a real handler
+            // there — see VBR's Javadoc) determines what happens next, exactly like real
+            // hardware with no BIOS-installed handler.
+            // imm8 was already extracted at the top of this method.
+            tra = imm8 << 2;
+            ssr = sr;
+            spc = nextPc;
+            return vbr + 0x100;
         } else {
             throw new UnsupportedOperationException(String.format(
                     "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));

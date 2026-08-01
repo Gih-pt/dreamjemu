@@ -90,6 +90,9 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.stsLPr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.ldsLMach;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.ldsLMacl;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.ldsLPr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.ldcVbr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.stcVbr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.trapa;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcl;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rte;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
@@ -1821,6 +1824,69 @@ class Sh4CpuTest {
 
         assertEquals(0xCAFEBABE, cpu.pr, "PR should be restored to its original value");
         assertEquals(100, cpu.r[15], "R15 should be back where it started");
+    }
+
+    @Test
+    void trapaSavesStateAndJumpsToVbrPlus0x100() {
+        // TRAPA #imm: real HLE boot/syscall code's actual mechanism for invoking
+        // BIOS-equivalent functionality (see docs/ROADMAP.md) — this interpreter has no
+        // installed handler, so this test only checks the hardware-defined entry sequence
+        // itself: TRA = imm<<2, SSR = SR, SPC = the return address, PC = VBR + 0x100.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        int pc = write(bus, 0, cmpEqReg(0, 0)); // sets T = true (R0 == R0), via public API only
+        write(bus, pc, trapa(0x23));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.vbr = 0x1000;
+
+        cpu.step(); // CMP/EQ R0,R0 — T becomes true
+        assertTrue(cpu.tFlag(), "sanity check: T should be true before TRAPA");
+        cpu.step(); // TRAPA #0x23
+
+        assertEquals(0x23 << 2, cpu.tra, "TRA should hold the immediate shifted left 2 bits");
+        assertEquals(1, cpu.ssr & 1, "SSR should have captured SR (T flag was true) before any change to SR");
+        assertEquals(4, cpu.spc, "SPC should hold the return address (the instruction after TRAPA)");
+        assertEquals(0x1000 + 0x100, cpu.pc, "PC should jump to VBR + 0x100");
+    }
+
+    @Test
+    void ldcVbrSetsVbrFromRegister() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldcVbr(3)); // LDC R3,VBR
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[3] = 0x8C020000;
+
+        cpu.step();
+
+        assertEquals(0x8C020000, cpu.vbr);
+    }
+
+    @Test
+    void stcVbrReadsVbrIntoRegister() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, stcVbr(3)); // STC VBR,R3
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.vbr = 0x8C020000;
+
+        cpu.step();
+
+        assertEquals(0x8C020000, cpu.r[3]);
+    }
+
+    @Test
+    void realisticSequenceLdcVbrThenTrapaJumpsToTheJustSetHandler() {
+        // The real-world pattern this pair exists for: runtime-startup code sets VBR to
+        // point at its own exception vector table (LDC Rn,VBR) before anything relies on
+        // TRAPA/interrupts working — then a later TRAPA correctly lands inside it.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        int pc = write(bus, 0, ldcVbr(1));  // LDC R1,VBR
+        write(bus, pc, trapa(0x10));         // TRAPA #0x10
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 0x40;
+
+        cpu.step(); // LDC R1,VBR
+        cpu.step(); // TRAPA #0x10
+
+        assertEquals(0x40 + 0x100, cpu.pc);
     }
 
     private static int write(SimpleTestBus bus, int address, int opcode) {

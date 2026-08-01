@@ -402,4 +402,16 @@ final class Sh4Asm {
     static int ldsLPr(int n) {
         return 0x4026 | (n << 8); // LDS.L @Rn+,PR
     }
+
+    static int ldcVbr(int n) {
+        return 0x402E | (n << 8); // LDC Rn,VBR
+    }
+
+    static int stcVbr(int n) {
+        return 0x0022 | (n << 8); // STC VBR,Rn
+    }
+
+    static int trapa(int imm8) {
+        return 0xC300 | (imm8 & 0xFF); // TRAPA #imm
+    }
 }
