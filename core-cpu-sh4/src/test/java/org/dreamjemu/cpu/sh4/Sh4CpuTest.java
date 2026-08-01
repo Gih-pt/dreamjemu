@@ -1889,6 +1889,49 @@ class Sh4CpuTest {
         assertEquals(0x40 + 0x100, cpu.pc);
     }
 
+    @Test
+    void stepLogsPcAndOpcodeAtTraceLevelWhenEnabled() {
+        // Verifies the wiring in step() itself (see Sh4Cpu's LOG field) — Logger/LogConfig's
+        // own behavior is covered by common's LoggerTest; this only checks Sh4Cpu actually
+        // calls it, with the right values, once per instruction.
+        org.dreamjemu.common.log.LogConfig.setGlobalLevel(org.dreamjemu.common.log.LogLevel.TRACE);
+        java.util.List<org.dreamjemu.common.log.LogRecord> captured = new java.util.ArrayList<>();
+        org.dreamjemu.common.log.LogConfig.setSink(captured::add);
+        try {
+            SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+            bus.writeInstruction(0, 0x0009); // NOP
+            Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+            cpu.step();
+
+            assertEquals(1, captured.size());
+            assertEquals("Sh4Cpu", captured.get(0).loggerName());
+            assertEquals("PC=0x00000000 opcode=0x0009", captured.get(0).message());
+        } finally {
+            org.dreamjemu.common.log.LogConfig.setGlobalLevel(org.dreamjemu.common.log.LogLevel.INFO);
+            org.dreamjemu.common.log.LogConfig.resetSinkToStdout();
+        }
+    }
+
+    @Test
+    void stepDoesNotLogAtTheDefaultLevel() {
+        // Default level is INFO; TRACE-level per-instruction logging must stay silent unless
+        // explicitly raised — critical given real disc images mean millions of step() calls.
+        java.util.List<org.dreamjemu.common.log.LogRecord> captured = new java.util.ArrayList<>();
+        org.dreamjemu.common.log.LogConfig.setSink(captured::add);
+        try {
+            SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+            bus.writeInstruction(0, 0x0009); // NOP
+            Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+            cpu.step();
+
+            assertTrue(captured.isEmpty());
+        } finally {
+            org.dreamjemu.common.log.LogConfig.resetSinkToStdout();
+        }
+    }
+
     private static int write(SimpleTestBus bus, int address, int opcode) {
         bus.writeInstruction(address, opcode);
         return address + 2;

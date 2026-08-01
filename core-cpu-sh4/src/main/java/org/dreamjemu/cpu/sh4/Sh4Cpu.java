@@ -1,5 +1,6 @@
 package org.dreamjemu.cpu.sh4;
 
+import org.dreamjemu.common.log.Logger;
 import org.dreamjemu.system.Bus;
 
 /**
@@ -124,6 +125,7 @@ public class Sh4Cpu {
     private boolean mFlag;
 
     private final Bus bus;
+    private static final Logger LOG = Logger.get(Sh4Cpu.class);
 
     public Sh4Cpu(Bus bus, int initialPc) {
         this.bus = bus;
@@ -168,6 +170,15 @@ public class Sh4Cpu {
     public void step() {
         int thisPc = pc;
         int opcode = fetch(thisPc);
+        if (LOG.isTraceEnabled()) {
+            // Guarded by isTraceEnabled() so this doesn't pay for a varargs Object[]
+            // allocation + int-boxing on every single step() call when TRACE isn't
+            // active — Logger.trace(String, Object...) already checks the level
+            // internally too, but that check happens AFTER the array/boxing cost the
+            // caller (here) already paid to build the arguments. Matters at the
+            // volumes real disc images produce — see Logger's Javadoc.
+            LOG.trace("PC=0x%08X opcode=0x%04X", thisPc, opcode);
+        }
 
         if ((opcode & 0xF000) == 0xA000) {
             // BRA label — delayed branch: the instruction at thisPc+2 (the

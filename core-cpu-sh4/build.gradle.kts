@@ -5,4 +5,6 @@ dependencies {
     // specific memory map (SystemBus/DreamcastAddressMap) — the interpreter
     // should work against any Bus implementation. See docs/ARCHITECTURE.md.
     implementation(project(":core-system"))
+    // For TRACE-level per-instruction logging — see Sh4Cpu's LOG field.
+    implementation(project(":common"))
 }

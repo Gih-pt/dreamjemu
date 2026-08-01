@@ -18,6 +18,11 @@ import org.dreamjemu.gdrom.SectorSource;
 import org.dreamjemu.cpu.sh4.Sh4Cpu;
 import org.dreamjemu.system.HleBootLoader;
 import org.dreamjemu.system.SystemBus;
+import org.dreamjemu.common.log.LogConfig;
+import org.dreamjemu.common.log.LogLevel;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -52,12 +57,42 @@ public final class Main {
     }
 
     public static void main(String[] args) {
-        if (args.length < 1) {
-            printUsage();
-            System.exit(1);
+        List<String> positional = new ArrayList<>();
+        String logLevelArg = null;
+        for (int i = 0; i < args.length; i++) {
+            String arg = args[i];
+            if (arg.startsWith("--log-level=")) {
+                logLevelArg = arg.substring("--log-level=".length());
+            } else if (arg.equals("--log-level")) {
+                if (i + 1 >= args.length) {
+                    System.err.println("--log-level requires a value (TRACE, DEBUG, INFO, WARN, ERROR, or OFF)");
+                    System.exit(1);
+                    return;
+                }
+                logLevelArg = args[++i];
+            } else {
+                positional.add(arg);
+            }
         }
 
-        Path imagePath = Path.of(args[0]);
+        if (logLevelArg != null) {
+            try {
+                LogConfig.setGlobalLevel(LogLevel.valueOf(logLevelArg.trim().toUpperCase()));
+            } catch (IllegalArgumentException e) {
+                System.err.println("Unrecognized --log-level value: \"" + logLevelArg
+                        + "\" (expected TRACE, DEBUG, INFO, WARN, ERROR, or OFF)");
+                System.exit(1);
+                return;
+            }
+        }
+
+        if (positional.isEmpty()) {
+            printUsage();
+            System.exit(1);
+            return;
+        }
+
+        Path imagePath = Path.of(positional.get(0));
         if (!Files.isRegularFile(imagePath)) {
             System.err.println("File not found: " + imagePath);
             System.exit(1);
@@ -110,7 +145,7 @@ public final class Main {
     private static void printUsage() {
         System.out.println("DreamJEmu disc image inspector (CLI)");
         System.out.println();
-        System.out.println("Usage: dreamjemu-cli <path-to-disc-image.gdi|.cue|.cdi>");
+        System.out.println("Usage: dreamjemu-cli [--log-level LEVEL] <path-to-disc-image.gdi|.cue|.cdi>");
         System.out.println();
         System.out.println("Detects the disc image format, loads it, locates the data track, prints");
         System.out.println("the parsed IP.BIN boot header, locates the boot file it names within the");
@@ -120,6 +155,13 @@ public final class Main {
         System.out.println("legally own - this project does not provide or link to any.");
         System.out.println();
         System.out.println("This does not run a real game to completion yet; see docs/STATUS.md.");
+        System.out.println();
+        System.out.println("--log-level LEVEL   TRACE, DEBUG, INFO (default), WARN, ERROR, or OFF.");
+        System.out.println("                     TRACE logs every SH-4 instruction executed (PC + opcode) -");
+        System.out.println("                     very verbose against real disc images (millions of lines).");
+        System.out.println("                     Can also be set via -Ddreamjemu.log.level=LEVEL or the");
+        System.out.println("                     DREAMJEMU_LOG_LEVEL environment variable; this flag wins");
+        System.out.println("                     if more than one is set. See common's LogConfig.");
     }
 
     /**

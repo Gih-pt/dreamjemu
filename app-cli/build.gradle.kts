@@ -18,4 +18,6 @@ dependencies {
     // (core-cpu-sh4) is what actually gets pointed at the result.
     implementation(project(":core-system"))
     implementation(project(":core-cpu-sh4"))
+    // For the --log-level flag — see Main's usage text and LogConfig.
+    implementation(project(":common"))
 }
