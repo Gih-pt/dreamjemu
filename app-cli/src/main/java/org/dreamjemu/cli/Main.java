@@ -332,50 +332,64 @@ public final class Main {
         // that early (instead of silently burning the whole budget, or a TRACE log, on identical
         // repeated output) is what LoopDetector is for — see its Javadoc for the algorithm.
         //
-        // Refined the same day, per the project owner, after a second real run found a SECOND,
-        // earlier, faster (4-byte-at-a-time) fill loop: report the first stable loop found, then
-        // — since it's very likely legitimate, finite work, and there may be more real code (or
-        // more loops) after it — stop checking for loops (that overhead isn't free either) and
-        // keep stepping silently, so a single run can reveal whether execution eventually reaches
-        // new code, hits something unimplemented, or genuinely never finishes within the budget.
+        // Refined twice more the same day, per the project owner, each time based on what an
+        // actual real-dump run showed:
+        //   1. "Report once, then stop checking and keep stepping" — a second real run found a
+        //      SECOND, earlier, faster (4-byte-at-a-time) fill loop, confirming there can be more
+        //      than one.
+        //   2. THIS refinement — that run then reached the WHOLE step budget again, and with
+        //      detection switched off after the first report, there was no way to tell whether
+        //      execution was still stuck in the very same loop the whole time, had moved on to a
+        //      different one, or had reached genuinely new code that just happened to run long.
+        //      So: keep detection continuously active (the overhead is cheap relative to a
+        //      multi-million-step run), but only print a NEW report when the just-confirmed loop
+        //      is at a genuinely different code location (identified by the lowest PC in its body
+        //      — see identifyLoop) than the last one reported; a re-detection of the SAME loop
+        //      (which will keep happening every ~repeatThreshold*period steps for as long as
+        //      execution stays in it) is silently reset and re-armed instead of printed again.
         LoopDetector loopDetector = new LoopDetector(1000, 1_000_000);
         final int ringCapacity = 4096; // generous upper bound on a loop body we can still fully display
         int[] pcRing = new int[ringCapacity];
         int[] opcodeRing = new int[ringCapacity];
         int ringPushes = 0;
-        boolean loopDetectionActive = true;
-        boolean loopWasDetected = false;
-        int loopDetectedAtStep = -1;
+        int lastReportedLoopIdentity = 0;
+        boolean haveLastReportedLoop = false;
+        int lastReportedAtStep = -1;
+        int distinctLoopsReported = 0;
 
         int steps = 0;
         try {
             for (; steps < maxSteps; steps++) {
-                if (loopDetectionActive) {
-                    int pcBeforeStep = cpu.pc;
-                    int opcodeBeforeStep = bus.read16(Integer.toUnsignedLong(pcBeforeStep)) & 0xFFFF;
-                    pcRing[ringPushes % ringCapacity] = pcBeforeStep;
-                    opcodeRing[ringPushes % ringCapacity] = opcodeBeforeStep;
-                    ringPushes++;
+                int pcBeforeStep = cpu.pc;
+                int opcodeBeforeStep = bus.read16(Integer.toUnsignedLong(pcBeforeStep)) & 0xFFFF;
+                pcRing[ringPushes % ringCapacity] = pcBeforeStep;
+                opcodeRing[ringPushes % ringCapacity] = opcodeBeforeStep;
+                ringPushes++;
 
-                    if (loopDetector.observe(pcBeforeStep, steps)) {
+                if (loopDetector.observe(pcBeforeStep, steps)) {
+                    int identity = identifyLoop(pcRing, ringPushes, ringCapacity, loopDetector.period());
+                    if (!haveLastReportedLoop || identity != lastReportedLoopIdentity) {
+                        if (haveLastReportedLoop) {
+                            System.out.println("Left the previously reported loop after " + (steps - lastReportedAtStep)
+                                    + " steps — this is a DIFFERENT loop:");
+                        }
                         printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps);
-                        System.out.println("Continuing silently past this point (won't report further loops) —");
-                        System.out.println("will only speak up again if it hits something unimplemented, or the");
-                        System.out.println("step budget below is reached first.");
-                        loopWasDetected = true;
-                        loopDetectedAtStep = steps;
-                        loopDetectionActive = false; // stop paying the detection overhead too, not just the output
+                        lastReportedLoopIdentity = identity;
+                        distinctLoopsReported++;
                     }
+                    haveLastReportedLoop = true;
+                    lastReportedAtStep = steps;
+                    loopDetector.reset(); // keep checking for whatever comes next, same loop or not
                 }
                 cpu.step();
             }
 
             System.out.println("Executed " + steps + " steps without hitting an unimplemented instruction.");
-            if (loopWasDetected) {
-                System.out.println("(Reached the step budget " + (steps - loopDetectedAtStep)
-                        + " steps after the loop reported above was detected — still running, whether still");
-                System.out.println(" in that loop, a later one, or genuinely new code; loop detection was");
-                System.out.println(" switched off after the first report, so this run can't tell which.)");
+            if (haveLastReportedLoop) {
+                System.out.println("(Reached the step budget " + (steps - lastReportedAtStep)
+                        + " steps after the loop last reported above — that was still the SAME loop the whole");
+                System.out.println(" time (" + distinctLoopsReported + " distinct loop(s) seen in total this run);");
+                System.out.println(" execution never left it within the budget.)");
             } else {
                 System.out.println("(Reached the step budget rather than a real stopping condition - this");
                 System.out.println(" interpreter found no stable repeating loop either; genuinely new code");
@@ -384,10 +398,10 @@ public final class Main {
         } catch (UnsupportedOperationException | IllegalStateException e) {
             System.out.println("Stopped after " + steps + " step(s) at PC=0x" + Integer.toHexString(cpu.pc) + ":");
             System.out.println("  " + e.getMessage());
-            if (loopWasDetected) {
-                System.out.println("(This happened " + (steps - loopDetectedAtStep) + " steps after the loop");
-                System.out.println(" reported above was detected — execution DID eventually leave that loop");
-                System.out.println(" and reach new code before hitting this.)");
+            if (haveLastReportedLoop) {
+                System.out.println("(This happened " + (steps - lastReportedAtStep) + " steps after the loop");
+                System.out.println(" last reported above (" + distinctLoopsReported + " distinct loop(s) seen in");
+                System.out.println(" total) — execution DID eventually leave it and reach new code before hitting this.)");
             }
             System.out.println("This is expected at this stage: real boot code needs SH-4 instructions,");
             System.out.println("hardware registers, or an exception/interrupt mechanism (TRAPA, MMU) this");
@@ -427,6 +441,33 @@ public final class Main {
         System.out.println("This may be legitimate but slow work (e.g. a byte-at-a-time memset/.bss-clear");
         System.out.println("loop — see docs/STATUS.md) or a genuine spin-wait on hardware state this");
         System.out.println("interpreter doesn't model yet (VBlank, DMA, timers — none exist so far).");
-        System.out.println("Stopped early rather than exhausting the step budget on repeated output.");
+        System.out.println("Continuing to step past this point — will only report again if a genuinely");
+        System.out.println("different loop is found, or speak up if something unimplemented is hit.");
+    }
+
+    /**
+     * Identifies a just-confirmed loop by the lowest PC in its body — real, compiled loop bodies
+     * essentially never coincidentally share their lowest instruction address with a genuinely
+     * different loop, so this is a cheap, good-enough signature for telling "still the same loop"
+     * apart from "moved on to a different one" across repeated {@link LoopDetector} detections
+     * (see {@code attemptMinimalBoot}'s comment on why detection is kept continuously active
+     * rather than switched off after the first report). Falls back to just the most recent PC if
+     * the loop body is too long to fully reconstruct from the ring buffer — an imperfect but safe
+     * degradation (worst case, two large loops get treated as different when they're not).
+     */
+    private static int identifyLoop(int[] pcRing, int ringPushes, int ringCapacity, long period) {
+        long available = Math.min(ringPushes, ringCapacity);
+        if (period <= 0 || period > available) {
+            return pcRing[(ringPushes - 1) % ringCapacity];
+        }
+        int lowestPc = Integer.MAX_VALUE;
+        for (long i = 0; i < period; i++) {
+            int index = (int) (((long) ringPushes - 1 - i) % ringCapacity);
+            if (index < 0) {
+                index += ringCapacity;
+            }
+            lowestPc = Math.min(lowestPc, pcRing[index]);
+        }
+        return lowestPc;
     }
 }
