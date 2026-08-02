@@ -51,6 +51,14 @@ final class Sh4Asm {
         return 0x8B00 | (disp8 & 0xFF);
     }
 
+    static int btS(int disp8) {
+        return 0x8D00 | (disp8 & 0xFF);
+    }
+
+    static int bfS(int disp8) {
+        return 0x8F00 | (disp8 & 0xFF);
+    }
+
     static int bra(int disp12) {
         return 0xA000 | (disp12 & 0x0FFF);
     }

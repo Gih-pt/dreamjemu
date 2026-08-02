@@ -242,6 +242,34 @@ public class Sh4Cpu {
             pc = targetPc;
             return;
         }
+        if ((opcode & 0xFF00) == 0x8D00) {
+            // BT/S label — delayed branch if T is set: the delay-slot counterpart of
+            // the already-implemented (non-delayed) BT. Confirmed against the
+            // authoritative SH opcode table (Renesas SH-4A / Hitachi SH7750 manuals),
+            // the same sources used for TRAPA/STS.L/LDS.L earlier this session. The
+            // branch condition (T) is read NOW, before the delay slot runs — same
+            // "decide before delay slot" discipline as JSR/RTS/JMP/RTE above, in case
+            // the delay slot itself changes T (e.g. a CMP/TST instruction). Real
+            // hardware evaluates the condition at the delayed branch instruction
+            // itself, not after its delay slot.
+            boolean takeBranch = tFlag();
+            int target = thisPc + 4 + signExtend8(opcode & 0xFF) * 2;
+            executeDelaySlot(thisPc + 2);
+            pc = takeBranch ? target : thisPc + 4;
+            return;
+        }
+        if ((opcode & 0xFF00) == 0x8F00) {
+            // BF/S label — delayed branch if T is clear: the delay-slot counterpart of
+            // the already-implemented (non-delayed) BF. Found necessary by a real
+            // Sonic Adventure dump (opcode 0x8F02, hit after 12,791,622 real SH-4
+            // instructions executed correctly — see docs/STATUS.md/CHANGELOG.md). Same
+            // "read condition before delay slot" discipline as BT/S above.
+            boolean takeBranch = !tFlag();
+            int target = thisPc + 4 + signExtend8(opcode & 0xFF) * 2;
+            executeDelaySlot(thisPc + 2);
+            pc = takeBranch ? target : thisPc + 4;
+            return;
+        }
 
         pc = executeNonDelayedInstruction(thisPc, opcode);
     }
@@ -270,7 +298,9 @@ public class Sh4Cpu {
                 || opcode == 0x000B             // RTS
                 || opcode == 0x002B             // RTE
                 || (opcode & 0xFF00) == 0x8900  // BT
-                || (opcode & 0xFF00) == 0x8B00; // BF
+                || (opcode & 0xFF00) == 0x8B00  // BF
+                || (opcode & 0xFF00) == 0x8D00  // BT/S
+                || (opcode & 0xFF00) == 0x8F00; // BF/S
     }
 
     /**

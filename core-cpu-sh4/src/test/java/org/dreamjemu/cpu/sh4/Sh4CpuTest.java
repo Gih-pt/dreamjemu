@@ -9,9 +9,11 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.addv;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.andImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.andReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bf;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.bfS;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bra;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bsr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.bt;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.btS;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqImmR0;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpEqReg;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.cmpGe;
@@ -415,6 +417,75 @@ class Sh4CpuTest {
         bus.writeInstruction(2, bt(0)); // illegal: a branch instruction in a delay slot
         Sh4Cpu cpu = new Sh4Cpu(bus, 0);
 
+        assertThrows(IllegalStateException.class, cpu::step);
+    }
+
+    @Test
+    void bfSBranchesAndExecutesTheDelaySlotWhenTIsClear() {
+        // Found necessary by a real Sonic Adventure dump: opcode 0x8F02, hit after
+        // 12,791,622 real SH-4 instructions executed correctly (see docs/STATUS.md).
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bfS(2));        // BF/S +2 -> target = 0 + 4 + 2*2 = 8
+        bus.writeInstruction(2, movImm(0, 99)); // delay slot: MUST execute regardless of the branch
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        // T clear (default): branch is taken.
+
+        cpu.step();
+
+        assertEquals(99, cpu.r[0], "the delay slot instruction's effect must be visible either way");
+        assertEquals(8, cpu.pc, "PC must land on the branch target when T is clear");
+    }
+
+    @Test
+    void bfSFallsThroughPastTheDelaySlotWhenTIsSet() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpEqReg(0, 0)); // sets T = true (R0 == R0)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.step(); // pc now 2, T is true
+
+        bus.writeInstruction(2, bfS(2));        // BF/S +2 -> target would be 2+4+2*2=10, but T is set
+        bus.writeInstruction(4, movImm(1, 42)); // delay slot: still executes even though not taken
+        cpu.step();
+
+        assertEquals(42, cpu.r[1], "the delay slot instruction's effect must be visible either way");
+        assertEquals(6, cpu.pc, "PC must fall through to thisPc+4 (skipping the branch AND its delay slot), not the target");
+    }
+
+    @Test
+    void btSBranchesAndExecutesTheDelaySlotWhenTIsSet() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpEqReg(0, 0)); // sets T = true (R0 == R0)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.step(); // pc now 2, T is true
+
+        bus.writeInstruction(2, btS(2));        // BT/S +2 -> target = 2 + 4 + 2*2 = 10
+        bus.writeInstruction(4, movImm(0, 77)); // delay slot
+        cpu.step();
+
+        assertEquals(77, cpu.r[0]);
+        assertEquals(10, cpu.pc, "PC must land on the branch target when T is set");
+    }
+
+    @Test
+    void btSFallsThroughPastTheDelaySlotWhenTIsClear() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, btS(2));        // T clear (default): not taken
+        bus.writeInstruction(2, movImm(1, 55)); // delay slot: still executes even though not taken
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step();
+
+        assertEquals(55, cpu.r[1], "the delay slot instruction's effect must be visible either way");
+        assertEquals(4, cpu.pc, "PC must fall through to thisPc+4, not the target");
+    }
+
+    @Test
+    void branchInBfSDelaySlotIsIllegal() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, bfS(2));
+        bus.writeInstruction(2, bt(0)); // illegal: a branch instruction in a delay slot
+
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
         assertThrows(IllegalStateException.class, cpu::step);
     }
 
