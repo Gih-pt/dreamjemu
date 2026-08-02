@@ -320,16 +320,19 @@ public final class Main {
                 + " (real hardware's documented \"" + ipBin.bootFilename() + "\" load address).");
 
         Sh4Cpu cpu = new Sh4Cpu(bus, entryPc);
-        // Raised from 100,000 on 2026-07-31: a real Sonic Adventure dump reached that
-        // original budget with no unimplemented instruction hit at all — genuinely
-        // encouraging, but it means 100,000 wasn't a real ceiling, just an arbitrary one.
-        final int maxSteps = 5_000_000;
+        // Step budget history against the real Sonic Adventure dump, all on 2026-07-31:
+        //   100,000    -> reached with no unimplemented instruction hit at all.
+        //   5,000,000  -> also reached, twice more (once per LoopDetector refinement below).
+        //   LoopDetector ultimately resolved the ambiguity this kept causing: it's genuinely
+        //   two sequential, legitimate crt0-style fill loops, not a spin-wait. The interpreter
+        //   got stuck reporting the SAME loop (byte-at-a-time, ~1 byte/5 instructions) for
+        //   nearly the entire 5,000,000 budget, clearing on the order of ~1MB — plausible for a
+        //   real .bss/buffer region, just slow. 100,000,000 gives real room for that to finish.
+        final int maxSteps = 100_000_000;
 
-        // Added 2026-07-31: that same real dump then ran the ENTIRE 5,000,000-step budget
-        // without stopping — a --log-level TRACE run revealed why: a tight, stable 5-instruction
-        // loop (almost certainly a crt0-style byte-at-a-time .bss-clearing loop — legitimate,
-        // finite work, just far too slow to finish within any reasonable step budget). Detecting
-        // that early (instead of silently burning the whole budget, or a TRACE log, on identical
+        // Added 2026-07-31: a --log-level TRACE run against the real dump revealed the FIRST of
+        // these fill loops (a tight, stable 5-instruction, byte-at-a-time loop). Detecting that
+        // early (instead of silently burning the whole budget, or a TRACE log, on identical
         // repeated output) is what LoopDetector is for — see its Javadoc for the algorithm.
         //
         // Refined twice more the same day, per the project owner, each time based on what an
@@ -337,16 +340,15 @@ public final class Main {
         //   1. "Report once, then stop checking and keep stepping" — a second real run found a
         //      SECOND, earlier, faster (4-byte-at-a-time) fill loop, confirming there can be more
         //      than one.
-        //   2. THIS refinement — that run then reached the WHOLE step budget again, and with
-        //      detection switched off after the first report, there was no way to tell whether
-        //      execution was still stuck in the very same loop the whole time, had moved on to a
-        //      different one, or had reached genuinely new code that just happened to run long.
-        //      So: keep detection continuously active (the overhead is cheap relative to a
-        //      multi-million-step run), but only print a NEW report when the just-confirmed loop
-        //      is at a genuinely different code location (identified by the lowest PC in its body
-        //      — see identifyLoop) than the last one reported; a re-detection of the SAME loop
-        //      (which will keep happening every ~repeatThreshold*period steps for as long as
-        //      execution stays in it) is silently reset and re-armed instead of printed again.
+        //   2. "Keep detection continuously active, only re-report a genuinely different loop" —
+        //      that run then reached the WHOLE step budget again, and with detection switched off
+        //      after the first report, there was no way to tell whether execution was still stuck
+        //      in the very same loop the whole time, had moved on to a different one, or had
+        //      reached genuinely new code that just happened to run long. A further real run with
+        //      THIS refinement finally gave an unambiguous answer: exactly 2 distinct loops seen,
+        //      stuck in the second (the byte-at-a-time one) for the rest of the budget — which is
+        //      exactly what justified raising maxSteps again, above, instead of investigating
+        //      further: we now know this is real, finite work, not a hardware-modeling gap.
         LoopDetector loopDetector = new LoopDetector(1000, 1_000_000);
         final int ringCapacity = 4096; // generous upper bound on a loop body we can still fully display
         int[] pcRing = new int[ringCapacity];
