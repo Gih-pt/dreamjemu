@@ -331,33 +331,52 @@ public final class Main {
         // finite work, just far too slow to finish within any reasonable step budget). Detecting
         // that early (instead of silently burning the whole budget, or a TRACE log, on identical
         // repeated output) is what LoopDetector is for — see its Javadoc for the algorithm.
+        //
+        // Refined the same day, per the project owner, after a second real run found a SECOND,
+        // earlier, faster (4-byte-at-a-time) fill loop: report the first stable loop found, then
+        // — since it's very likely legitimate, finite work, and there may be more real code (or
+        // more loops) after it — stop checking for loops (that overhead isn't free either) and
+        // keep stepping silently, so a single run can reveal whether execution eventually reaches
+        // new code, hits something unimplemented, or genuinely never finishes within the budget.
         LoopDetector loopDetector = new LoopDetector(1000, 1_000_000);
         final int ringCapacity = 4096; // generous upper bound on a loop body we can still fully display
         int[] pcRing = new int[ringCapacity];
         int[] opcodeRing = new int[ringCapacity];
         int ringPushes = 0;
+        boolean loopDetectionActive = true;
+        boolean loopWasDetected = false;
+        int loopDetectedAtStep = -1;
 
         int steps = 0;
-        boolean loopDetected = false;
         try {
             for (; steps < maxSteps; steps++) {
-                int pcBeforeStep = cpu.pc;
-                int opcodeBeforeStep = bus.read16(Integer.toUnsignedLong(pcBeforeStep)) & 0xFFFF;
-                pcRing[ringPushes % ringCapacity] = pcBeforeStep;
-                opcodeRing[ringPushes % ringCapacity] = opcodeBeforeStep;
-                ringPushes++;
+                if (loopDetectionActive) {
+                    int pcBeforeStep = cpu.pc;
+                    int opcodeBeforeStep = bus.read16(Integer.toUnsignedLong(pcBeforeStep)) & 0xFFFF;
+                    pcRing[ringPushes % ringCapacity] = pcBeforeStep;
+                    opcodeRing[ringPushes % ringCapacity] = opcodeBeforeStep;
+                    ringPushes++;
 
-                if (loopDetector.observe(pcBeforeStep, steps)) {
-                    loopDetected = true;
-                    break;
+                    if (loopDetector.observe(pcBeforeStep, steps)) {
+                        printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps);
+                        System.out.println("Continuing silently past this point (won't report further loops) —");
+                        System.out.println("will only speak up again if it hits something unimplemented, or the");
+                        System.out.println("step budget below is reached first.");
+                        loopWasDetected = true;
+                        loopDetectedAtStep = steps;
+                        loopDetectionActive = false; // stop paying the detection overhead too, not just the output
+                    }
                 }
                 cpu.step();
             }
 
-            if (loopDetected) {
-                printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps);
+            System.out.println("Executed " + steps + " steps without hitting an unimplemented instruction.");
+            if (loopWasDetected) {
+                System.out.println("(Reached the step budget " + (steps - loopDetectedAtStep)
+                        + " steps after the loop reported above was detected — still running, whether still");
+                System.out.println(" in that loop, a later one, or genuinely new code; loop detection was");
+                System.out.println(" switched off after the first report, so this run can't tell which.)");
             } else {
-                System.out.println("Executed " + steps + " steps without hitting an unimplemented instruction.");
                 System.out.println("(Reached the step budget rather than a real stopping condition - this");
                 System.out.println(" interpreter found no stable repeating loop either; genuinely new code");
                 System.out.println(" the whole way, or a loop longer than LoopDetector's repeat threshold.)");
@@ -365,6 +384,11 @@ public final class Main {
         } catch (UnsupportedOperationException | IllegalStateException e) {
             System.out.println("Stopped after " + steps + " step(s) at PC=0x" + Integer.toHexString(cpu.pc) + ":");
             System.out.println("  " + e.getMessage());
+            if (loopWasDetected) {
+                System.out.println("(This happened " + (steps - loopDetectedAtStep) + " steps after the loop");
+                System.out.println(" reported above was detected — execution DID eventually leave that loop");
+                System.out.println(" and reach new code before hitting this.)");
+            }
             System.out.println("This is expected at this stage: real boot code needs SH-4 instructions,");
             System.out.println("hardware registers, or an exception/interrupt mechanism (TRAPA, MMU) this");
             System.out.println("interpreter doesn't implement yet. See docs/STATUS.md \"Not started yet\".");
