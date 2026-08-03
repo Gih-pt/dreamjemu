@@ -422,4 +422,28 @@ final class Sh4Asm {
     static int trapa(int imm8) {
         return 0xC300 | (imm8 & 0xFF); // TRAPA #imm
     }
+
+    static int shll2(int n) {
+        return 0x4008 | (n << 8);
+    }
+
+    static int shll8(int n) {
+        return 0x4018 | (n << 8);
+    }
+
+    static int shll16(int n) {
+        return 0x4028 | (n << 8);
+    }
+
+    static int shlr2(int n) {
+        return 0x4009 | (n << 8);
+    }
+
+    static int shlr8(int n) {
+        return 0x4019 | (n << 8);
+    }
+
+    static int shlr16(int n) {
+        return 0x4029 | (n << 8);
+    }
 }

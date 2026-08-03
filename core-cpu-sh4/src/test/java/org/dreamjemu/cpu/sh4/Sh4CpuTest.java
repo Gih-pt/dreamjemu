@@ -95,6 +95,12 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.ldsLPr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.ldcVbr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.stcVbr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.trapa;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shll2;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shll8;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shll16;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shlr2;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shlr8;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.shlr16;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcl;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rte;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
@@ -318,6 +324,101 @@ class Sh4CpuTest {
         assertTrue(cpu.tFlag(), "T should hold the bit shifted out (old LSB, which was 1)");
         assertEquals(0xC0000000, cpu.r[0],
                 "SHAR is an arithmetic shift: the vacated top bit must be sign-filled (1, since the value was negative)");
+    }
+
+    @Test
+    void shll2ShiftsLeftByTwoAndDoesNotTouchT() {
+        // Found necessary by a real Sonic Adventure dump (opcode 0x4E08) after it executed
+        // 12,791,752 real SH-4 instructions correctly. Unlike SHLL/SHAL above, the fixed-amount
+        // shift family (SHLL2/8/16, SHLR2/8/16) does NOT affect T on real hardware.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpEqReg(0, 0)); // sets T = true first, to prove SHLL2 leaves it alone
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.step();
+        assertTrue(cpu.tFlag(), "sanity check: T should be true before SHLL2");
+
+        bus.writeInstruction(2, shll2(1));
+        cpu.r[1] = 0x00000001;
+        cpu.step();
+
+        assertEquals(0x00000004, cpu.r[1]);
+        assertTrue(cpu.tFlag(), "SHLL2 must NOT touch T");
+    }
+
+    @Test
+    void shll8ShiftsLeftByEight() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shll8(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x00000001;
+
+        cpu.step();
+
+        assertEquals(0x00000100, cpu.r[0]);
+    }
+
+    @Test
+    void shll16ShiftsLeftBySixteen() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shll16(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x00000001;
+
+        cpu.step();
+
+        assertEquals(0x00010000, cpu.r[0]);
+    }
+
+    @Test
+    void shlr2ShiftsRightByTwoZeroFillingAndDoesNotTouchT() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpEqReg(0, 0)); // sets T = true first
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.step();
+
+        bus.writeInstruction(2, shlr2(1));
+        cpu.r[1] = 0x80000000; // top bit set — must zero-fill, not sign-extend
+        cpu.step();
+
+        assertEquals(0x20000000, cpu.r[1]);
+        assertTrue(cpu.tFlag(), "SHLR2 must NOT touch T");
+    }
+
+    @Test
+    void shlr8ShiftsRightByEightZeroFilling() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shlr8(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000000;
+
+        cpu.step();
+
+        assertEquals(0x00800000, cpu.r[0]);
+    }
+
+    @Test
+    void shlr16ShiftsRightBySixteenZeroFilling() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shlr16(0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000000;
+
+        cpu.step();
+
+        assertEquals(0x00008000, cpu.r[0]);
+    }
+
+    @Test
+    void realWorldOpcode0x4E08DecodesAsShll2() {
+        // The exact opcode/register (R14) the real Sonic Adventure dump hit.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, 0x4E08);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[14] = 5;
+
+        cpu.step();
+
+        assertEquals(20, cpu.r[14]);
     }
 
     @Test

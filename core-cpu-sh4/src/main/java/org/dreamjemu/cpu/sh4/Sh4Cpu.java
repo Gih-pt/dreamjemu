@@ -499,6 +499,29 @@ public class Sh4Cpu {
             // SHAR Rn — arithmetic shift right by 1 (sign-extending); T = bit shifted out (old LSB).
             setT((r[n] & 1) != 0);
             r[n] = r[n] >> 1;
+        } else if ((opcode & 0xF0FF) == 0x4008) {
+            // SHLL2 Rn — logical shift left by 2. Unlike SHLL/SHAL above, the fixed-amount
+            // shift family (SHLL2/8/16, SHLR2/8/16) does NOT touch T on real hardware —
+            // confirmed against two independent sources (SH7091 header used by real Dreamcast
+            // homebrew, and the authoritative SH opcode table already used this session).
+            // Found necessary by a real Sonic Adventure dump (opcode 0x4E08) after it executed
+            // 12,791,752 real SH-4 instructions correctly — see docs/STATUS.md/CHANGELOG.md.
+            r[n] = r[n] << 2;
+        } else if ((opcode & 0xF0FF) == 0x4018) {
+            // SHLL8 Rn — logical shift left by 8. No T effect — see SHLL2 above.
+            r[n] = r[n] << 8;
+        } else if ((opcode & 0xF0FF) == 0x4028) {
+            // SHLL16 Rn — logical shift left by 16. No T effect — see SHLL2 above.
+            r[n] = r[n] << 16;
+        } else if ((opcode & 0xF0FF) == 0x4009) {
+            // SHLR2 Rn — logical shift right by 2 (zero-fill). No T effect — see SHLL2 above.
+            r[n] = r[n] >>> 2;
+        } else if ((opcode & 0xF0FF) == 0x4019) {
+            // SHLR8 Rn — logical shift right by 8 (zero-fill). No T effect — see SHLL2 above.
+            r[n] = r[n] >>> 8;
+        } else if ((opcode & 0xF0FF) == 0x4029) {
+            // SHLR16 Rn — logical shift right by 16 (zero-fill). No T effect — see SHLL2 above.
+            r[n] = r[n] >>> 16;
         } else if ((opcode & 0xF0FF) == 0x4024) {
             // ROTCL Rn — rotate left through T: new T = old MSB; Rn = (Rn<<1) | old T.
             // Used together with DIV1 to fold each computed quotient bit into a
