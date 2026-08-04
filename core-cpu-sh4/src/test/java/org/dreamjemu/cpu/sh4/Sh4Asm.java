@@ -446,4 +446,20 @@ final class Sh4Asm {
     static int shlr16(int n) {
         return 0x4029 | (n << 8);
     }
+
+    static int ldcSr(int n) {
+        return 0x400E | (n << 8); // LDC Rn,SR
+    }
+
+    static int stcSr(int n) {
+        return 0x0002 | (n << 8); // STC SR,Rn
+    }
+
+    static int ldcGbr(int n) {
+        return 0x401E | (n << 8); // LDC Rn,GBR
+    }
+
+    static int stcGbr(int n) {
+        return 0x0012 | (n << 8); // STC GBR,Rn
+    }
 }

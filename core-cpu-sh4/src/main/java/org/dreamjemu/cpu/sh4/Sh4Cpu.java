@@ -85,6 +85,16 @@ public class Sh4Cpu {
     public int vbr;
 
     /**
+     * Global Base Register — real hardware uses this as the base for GBR-relative addressing
+     * modes ({@code @(disp,GBR)}, {@code @(R0,GBR)}, and the {@code #imm,@(R0,GBR)} logic-op
+     * forms), none of which are implemented yet (see docs/STATUS.md's "Not started yet"). Only
+     * the register itself — settable/readable via {@code LDC Rn,GBR}/{@code STC GBR,Rn}, found
+     * necessary by a real Sonic Adventure dump (opcode {@code 0x0002}, {@code STC SR,Rn}) — exists
+     * so far; nothing yet reads it for addressing.
+     */
+    public int gbr;
+
+    /**
      * TRAPA exception register — real hardware sets this to the {@code TRAPA} instruction's
      * 8-bit immediate, shifted left 2 bits, so a real exception handler (jumped to via
      * {@link #vbr}) can tell which specific trap was requested. Not read by anything in this
@@ -829,6 +839,29 @@ public class Sh4Cpu {
             // LDC Rn,VBR above; added alongside it purely for symmetry/testability, the same
             // way this project has consistently implemented STS.L/LDS.L pairs together.
             r[n] = vbr;
+        } else if ((opcode & 0xF0FF) == 0x400E) {
+            // LDC Rn,SR — loads the Status Register from a general-purpose register. Only bit 0
+            // (T) is meaningful in this interpreter's simplified SR model (see sr's Javadoc) —
+            // any other bits real code sets (privilege mode, interrupt mask, etc.) are stored but
+            // otherwise inert here, the same simplification already accepted for TRAPA's SSR/RTE.
+            sr = r[n];
+        } else if ((opcode & 0xF0FF) == 0x0002) {
+            // STC SR,Rn — reads SR back into a general-purpose register. Found necessary by a
+            // real Sonic Adventure dump (opcode 0x0002, R0) after it executed 12,791,785 real
+            // SH-4 instructions correctly — see docs/STATUS.md/CHANGELOG.md. Implemented alongside
+            // LDC Rn,SR/LDC Rn,GBR/STC GBR,Rn for the same reason every instruction pair/family
+            // has been implemented together this session.
+            r[n] = sr;
+        } else if ((opcode & 0xF0FF) == 0x401E) {
+            // LDC Rn,GBR — sets the Global Base Register that GBR-relative addressing modes will
+            // eventually use (not implemented yet — see GBR's Javadoc and docs/STATUS.md's "Not
+            // started yet"). Storing the register itself now is a reasonable, narrow first step,
+            // the same way VBR existed before TRAPA needed it.
+            gbr = r[n];
+        } else if ((opcode & 0xF0FF) == 0x0012) {
+            // STC GBR,Rn — reads GBR back into a general-purpose register. Mirror image of
+            // LDC Rn,GBR above, added alongside it for the same symmetry reason as VBR's pair.
+            r[n] = gbr;
         } else if ((opcode & 0xFF00) == 0xC300) {
             // TRAPA #imm — software exception. Unlike every branch above, TRAPA has NO delay
             // slot (it takes effect immediately) and directly changes PC itself, so — uniquely
