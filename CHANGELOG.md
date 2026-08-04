@@ -6,6 +6,13 @@ All notable changes to this project should be documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Added — 2026-08-04 (core-cpu-sh4: LDC Rn,SR/STC SR,Rn/LDC Rn,GBR/STC GBR,Rn)
+- After SHLL2 (previous entry), the real Sonic Adventure run advanced to 12,791,785 real instructions before stopping on `Unimplemented SH-4 opcode 0x0002` — which decodes to `STC SR,Rn` (register R0), part of the wider `LDC`/`STC` control-register family this project already started with `VBR`.
+- Implemented the whole SR/GBR pair together: `LDC Rn,SR`/`STC SR,Rn` (SR already existed internally for the T flag/TRAPA's SSR handling; this exposes it to general-purpose registers) and `LDC Rn,GBR`/`STC GBR,Rn` (a new `gbr` field, the same narrow "store the register, addressing modes come later" step already taken for VBR).
+- All 4 encodings confirmed against four independent authoritative sources agreeing exactly (`0x0002`/`0x0012`/`0x400E`/`0x401E`).
+- 3 new JUnit tests, including a dedicated regression test using the literal real-world opcode (`0x0002`) and register (`R0`) the dump hit.
+- *AI usage: yes — implemented with Claude (Anthropic), web search used to confirm all 4 opcode encodings before implementation. Verified: compiles cleanly with `javac`; a standalone sandbox harness reproducing all 3 new tests plus the literal real-world opcode passes (4/4 checks); the full harness suite built up over this session was re-run afterward with no regressions. Still needs a real `./gradlew :core-cpu-sh4:test` run, and a re-run of `app-cli` against the real Sonic Adventure dump, to confirm end-to-end.*
+
 ### Confirmed — 2026-08-04 (app-javafx: macOS jpackage app-version fix verified via a real CI run)
 - Nightly Build #21 (manually triggered) passed on `macos-latest` — the first successful `nightly (macos-latest)` run since the app-version bug was introduced. Confirms the two-part fix (strip non-numeric suffix, then bump a zero/negative major version to 1) actually resolves "The first number in an app-version cannot be zero or negative" on real macOS jpackage, not just in local simulation.
 - *AI usage: yes — Claude (Anthropic) diagnosed why the first fix attempt (commit 804179d) was incomplete (it only handled the suffix-stripping half) by having the project owner paste the actual file content from GitHub directly, since the assistant's own local sandbox state had drifted out of sync with the real repository. Confirmed via a real GitHub Actions run on the project owner's own repository — the strongest form of verification available for a macOS-specific bundler behavior that cannot be reproduced in a Linux sandbox.*

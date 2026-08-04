@@ -101,6 +101,10 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.shll16;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shlr2;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shlr8;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.shlr16;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.ldcSr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.stcSr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.ldcGbr;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.stcGbr;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rotcl;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rte;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.rts;
@@ -419,6 +423,48 @@ class Sh4CpuTest {
         cpu.step();
 
         assertEquals(20, cpu.r[14]);
+    }
+
+    @Test
+    void ldcSrLoadsSrFromRegister() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldcSr(3)); // LDC R3,SR
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[3] = 1; // only bit 0 (T) is meaningful in this interpreter's simplified SR model
+
+        cpu.step();
+
+        assertTrue(cpu.tFlag(), "T should reflect bit 0 of the value loaded into SR");
+    }
+
+    @Test
+    void stcSrReadsSrIntoRegister() {
+        // The exact opcode/register (R0) the real Sonic Adventure dump hit, after it executed
+        // 12,791,785 real SH-4 instructions correctly — see docs/STATUS.md/CHANGELOG.md.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, cmpEqReg(1, 1)); // sets T = true (R1 == R1) so SR is non-zero
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.step();
+
+        bus.writeInstruction(2, stcSr(0)); // STC SR,R0 — the real-world opcode (0x0002)
+        cpu.step();
+
+        assertEquals(1, cpu.r[0] & 1, "R0's bit 0 should reflect T, which was set");
+    }
+
+    @Test
+    void ldcGbrThenStcGbrRoundTrips() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        int pc = write(bus, 0, ldcGbr(1));  // LDC R1,GBR
+        write(bus, pc, stcGbr(2));           // STC GBR,R2
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[1] = 0x8C020000;
+
+        cpu.step(); // LDC R1,GBR
+        cpu.step(); // STC GBR,R2
+
+        assertEquals(0x8C020000, cpu.gbr);
+        assertEquals(0x8C020000, cpu.r[2]);
     }
 
     @Test
