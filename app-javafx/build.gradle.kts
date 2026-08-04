@@ -65,7 +65,20 @@ tasks.register<Exec>("jpackageImage") {
         // jpackage requires a strictly numeric X[.Y[.Z]] version — strip any
         // "-bootstrap"/"-SNAPSHOT"-style suffix from the Gradle project version.
         val rawVersion = project.version.toString()
-        val sanitizedVersion = Regex("^[0-9]+(\\.[0-9]+){0,2}").find(rawVersion)?.value ?: "0.0.1"
+        val matched = Regex("^[0-9]+(\\.[0-9]+){0,2}").find(rawVersion)?.value ?: "0.0.1"
+
+        // macOS's bundler additionally rejects a leading zero/negative major version
+        // ("The first number in an app-version cannot be zero or negative") — a
+        // CFBundleVersion-format requirement, not something Windows/Linux enforce, but
+        // applied here regardless of host OS so every platform gets one consistent
+        // version string. Bumps the major component only (e.g. "0.0.1" -> "1.0.1"),
+        // preserving minor/patch so successive bootstrap releases still sort/compare
+        // sensibly against each other; doesn't touch project.version itself, which is
+        // free to stay in its own 0.x.y-style scheme until a real 1.0 release.
+        val parts = matched.split(".").map { it.toIntOrNull() ?: 0 }.toMutableList()
+        while (parts.size < 3) parts.add(0)
+        if (parts[0] < 1) parts[0] = 1
+        val sanitizedVersion = parts.joinToString(".")
 
         commandLine(
             jpackageBin,
