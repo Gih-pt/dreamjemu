@@ -6,7 +6,11 @@ All notable changes to this project should be documented here. Format loosely fo
 
 ## [Unreleased]
 
-### Added — 2026-07-31 (core-cpu-sh4: SHLL2/SHLR2/SHLL8/SHLR8/SHLL16/SHLR16 — found necessary on the very next real run after BT/S/BF/S)
+### Confirmed — 2026-08-04 (app-javafx: macOS jpackage app-version fix verified via a real CI run)
+- Nightly Build #21 (manually triggered) passed on `macos-latest` — the first successful `nightly (macos-latest)` run since the app-version bug was introduced. Confirms the two-part fix (strip non-numeric suffix, then bump a zero/negative major version to 1) actually resolves "The first number in an app-version cannot be zero or negative" on real macOS jpackage, not just in local simulation.
+- *AI usage: yes — Claude (Anthropic) diagnosed why the first fix attempt (commit 804179d) was incomplete (it only handled the suffix-stripping half) by having the project owner paste the actual file content from GitHub directly, since the assistant's own local sandbox state had drifted out of sync with the real repository. Confirmed via a real GitHub Actions run on the project owner's own repository — the strongest form of verification available for a macOS-specific bundler behavior that cannot be reproduced in a Linux sandbox.*
+
+### Added — 2026-08-03 (core-cpu-sh4: SHLL2/SHLR2/SHLL8/SHLR8/SHLL16/SHLR16 — found necessary on the very next real run after BT/S/BF/S)
 - With `BT/S`/`BF/S` implemented, the real Sonic Adventure run advanced from 12,791,622 to 12,791,752 real instructions before stopping on `Unimplemented SH-4 opcode 0x4E08` — which decodes to `SHLL2 R14`, a fixed-2-bit logical left shift.
 - Implemented the whole fixed-shift-amount family together — `SHLL2`/`SHLL8`/`SHLL16` and their right-shift counterparts `SHLR2`/`SHLR8`/`SHLR16` — rather than just the one opcode hit, matching this session's established pattern for instruction families.
 - Confirmed against two independent sources: the SH7091 header used by real Dreamcast homebrew (`ttjoseph/swirly-main`, the exact chip in a real Dreamcast) and the authoritative SH opcode table already used for every other opcode this session — both agree on all 6 encodings.
