@@ -408,6 +408,26 @@ public final class Main {
             System.out.println("This is expected at this stage: real boot code needs SH-4 instructions,");
             System.out.println("hardware registers, or an exception/interrupt mechanism (TRAPA, MMU) this");
             System.out.println("interpreter doesn't implement yet. See docs/STATUS.md \"Not started yet\".");
+            printRecentHistory(pcRing, opcodeRing, ringPushes, ringCapacity, 40);
+        }
+    }
+
+    /**
+     * Dumps the last {@code count} (PC, opcode) pairs executed before a stop, oldest first —
+     * added specifically because a real run stopped at {@code PC=0x00000000} (opcode
+     * {@code 0x0000}, itself not a valid instruction — almost certainly execution having jumped
+     * through an uninitialized function pointer or vector-table entry a real BIOS would have set
+     * up), which is far more useful to diagnose with the handful of instructions leading up to it
+     * than with just the single failing address. Reuses the same ring buffer {@link LoopDetector}
+     * already keeps for loop-body display, so this costs nothing extra to maintain.
+     */
+    private static void printRecentHistory(int[] pcRing, int[] opcodeRing, int ringPushes, int ringCapacity, int count) {
+        int available = Math.min(ringPushes, Math.min(count, ringCapacity));
+        System.out.println();
+        System.out.println("--- last " + available + " instruction(s) executed before this ---");
+        for (int i = available - 1; i >= 0; i--) {
+            int index = ((ringPushes - 1 - i) % ringCapacity + ringCapacity) % ringCapacity;
+            System.out.println(String.format("    PC=0x%08X opcode=0x%04X", pcRing[index], opcodeRing[index]));
         }
     }
 
