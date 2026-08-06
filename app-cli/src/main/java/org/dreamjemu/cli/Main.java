@@ -405,9 +405,27 @@ public final class Main {
                 System.out.println(" last reported above (" + distinctLoopsReported + " distinct loop(s) seen in");
                 System.out.println(" total) — execution DID eventually leave it and reach new code before hitting this.)");
             }
-            System.out.println("This is expected at this stage: real boot code needs SH-4 instructions,");
-            System.out.println("hardware registers, or an exception/interrupt mechanism (TRAPA, MMU) this");
-            System.out.println("interpreter doesn't implement yet. See docs/STATUS.md \"Not started yet\".");
+            if (cpu.pc == 0) {
+                // Found via a real Sonic Adventure run: the last instruction before this was RTS,
+                // returning to a PR value of exactly 0 — Sh4Cpu.pr's Java default, since nothing
+                // ever explicitly sets it before boot starts. On real hardware, the BIOS sets PR
+                // to a valid "return to supervisor code" address before jumping to a game's entry
+                // point; this project's BIOS-free HLE boot just sets PC directly and leaves PR
+                // untouched. This almost certainly means execution reached the outermost function
+                // in the boot entry's own call chain, and that function returned normally — not a
+                // missing instruction or a real emulation bug. 0x00000000 is never a legitimate
+                // fetch address otherwise (RAM starts at 0x0C000000; the boot file loads to
+                // 0x8C010000+), so landing here specifically is a strong, if not certain, signal.
+                System.out.println();
+                System.out.println("PC=0 specifically, and the instruction just before this was RTS: this is most likely");
+                System.out.println("execution returning from the boot entry's outermost call frame, not a missing");
+                System.out.println("instruction — real hardware would have PR pointing at BIOS/supervisor code to return");
+                System.out.println("into here, which this BIOS-free HLE boot never sets up. See docs/STATUS.md.");
+            } else {
+                System.out.println("This is expected at this stage: real boot code needs SH-4 instructions,");
+                System.out.println("hardware registers, or an exception/interrupt mechanism (TRAPA, MMU) this");
+                System.out.println("interpreter doesn't implement yet. See docs/STATUS.md \"Not started yet\".");
+            }
             printRecentHistory(pcRing, opcodeRing, ringPushes, ringCapacity, 40);
         }
     }
