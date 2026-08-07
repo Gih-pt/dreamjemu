@@ -319,6 +319,13 @@ public final class Main {
         System.out.println("Loaded " + bootFileBytes.length + " bytes to 0x" + Integer.toHexString(entryPc)
                 + " (real hardware's documented \"" + ipBin.bootFilename() + "\" load address).");
 
+        // Added 2026-08-04: a real BIOS installs this vector table before jumping to a game;
+        // this BIOS-free HLE boot never did, so any code trying to use a BIOS syscall would read
+        // zero from an uninitialized vector. See BiosSyscallHandler's Javadoc for what's actually
+        // implemented behind each vector (the state-free ones only — flashrom/font-ROM/real
+        // GD-ROM command processing are honestly reported as unsupported, not faked).
+        BiosSyscallHandler.installVectorTable(bus);
+
         Sh4Cpu cpu = new Sh4Cpu(bus, entryPc);
         // Step budget history against the real Sonic Adventure dump, all on 2026-07-31:
         //   100,000    -> reached with no unimplemented instruction hit at all.
@@ -362,6 +369,19 @@ public final class Main {
         int steps = 0;
         try {
             for (; steps < maxSteps; steps++) {
+                if (BiosSyscallHandler.isSyscallTrap(cpu.pc)) {
+                    // No real opcode exists at a trap address (it's not real BIOS code — see
+                    // BiosSyscallHandler's Javadoc) — record it in the history ring buffer as a
+                    // recognizable sentinel, handle it natively, and skip straight to the next
+                    // iteration rather than letting the normal fetch/decode path see opcode 0x0000
+                    // there and fail exactly the way the PC=0 boundary did.
+                    pcRing[ringPushes % ringCapacity] = cpu.pc;
+                    opcodeRing[ringPushes % ringCapacity] = 0x0000;
+                    ringPushes++;
+                    BiosSyscallHandler.handle(cpu);
+                    continue;
+                }
+
                 int pcBeforeStep = cpu.pc;
                 int opcodeBeforeStep = bus.read16(Integer.toUnsignedLong(pcBeforeStep)) & 0xFFFF;
                 pcRing[ringPushes % ringCapacity] = pcBeforeStep;
