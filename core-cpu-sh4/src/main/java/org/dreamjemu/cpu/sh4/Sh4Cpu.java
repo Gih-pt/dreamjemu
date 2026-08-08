@@ -327,137 +327,51 @@ public class Sh4Cpu {
         int imm8 = opcode & 0xFF;
         int nextPc = thisPc + 2;
 
+        // Mechanical dispatch across the per-family methods below (extracted from what
+        // used to be a single 105-branch if/else chain here -- see docs/STATUS.md /
+        // CHANGELOG.md for the restructuring). Each family's internal opcode checks are
+        // untouched; a brute-force check across all 65,536 possible 16-bit opcodes
+        // confirmed the original chain never had two branches matching the same opcode,
+        // so trying families in this fixed order cannot change which instruction fires
+        // for any opcode, compared to before this split.
+        Integer result;
+        if ((result = tryExecuteMisc(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+        if ((result = tryExecuteDataTransfer(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+        if ((result = tryExecuteArithmetic(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+        if ((result = tryExecuteLogic(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+        if ((result = tryExecuteShiftRotate(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+        if ((result = tryExecuteExtendSwap(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+        if ((result = tryExecuteSystemControl(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+
+        throw new UnsupportedOperationException(String.format(
+                "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));
+    }
+
+    /**
+     * Tries each misc-family instruction. Returns the (possibly
+     * updated, e.g. for a taken branch) next PC if {@code opcode} matched one
+     * of this family's instructions, or {@code null} if none matched (the
+     * caller then tries the next family) -- purely a mechanical split of what
+     * used to be one large if/else chain in {@link #executeNonDelayedInstruction};
+     * no opcode mask/value/logic differs from before this split.
+     */
+    private Integer tryExecuteMisc(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
         if (opcode == 0x0009) {
             // NOP — no operation.
-        } else if ((opcode & 0xF000) == 0xE000) {
-            // MOV #imm,Rn — load sign-extended 8-bit immediate.
-            r[n] = signExtend8(imm8);
-        } else if ((opcode & 0xF00F) == 0x6003) {
-            // MOV Rm,Rn
-            r[n] = r[m];
-        } else if ((opcode & 0xF000) == 0x7000) {
-            // ADD #imm,Rn — Rn += sign-extended 8-bit immediate.
-            r[n] = r[n] + signExtend8(imm8);
-        } else if ((opcode & 0xF00F) == 0x300C) {
-            // ADD Rm,Rn
-            r[n] = r[n] + r[m];
-        } else if ((opcode & 0xF00F) == 0x3008) {
-            // SUB Rm,Rn
-            r[n] = r[n] - r[m];
-        } else if ((opcode & 0xF00F) == 0x3000) {
-            // CMP/EQ Rm,Rn — T = (Rn == Rm)
-            setT(r[n] == r[m]);
-        } else if ((opcode & 0xFF00) == 0x8800) {
-            // CMP/EQ #imm,R0 — T = (R0 == sign-extended 8-bit immediate)
-            setT(r[0] == signExtend8(imm8));
-        } else if ((opcode & 0xF00F) == 0x3002) {
-            // CMP/HS Rm,Rn — T = (Rn >= Rm), UNSIGNED comparison.
-            setT(Integer.compareUnsigned(r[n], r[m]) >= 0);
-        } else if ((opcode & 0xF00F) == 0x3003) {
-            // CMP/GE Rm,Rn — T = (Rn >= Rm), signed comparison (Java's int is already signed).
-            setT(r[n] >= r[m]);
-        } else if ((opcode & 0xF00F) == 0x3006) {
-            // CMP/HI Rm,Rn — T = (Rn > Rm), UNSIGNED comparison.
-            setT(Integer.compareUnsigned(r[n], r[m]) > 0);
-        } else if ((opcode & 0xF00F) == 0x3007) {
-            // CMP/GT Rm,Rn — T = (Rn > Rm), signed comparison.
-            setT(r[n] > r[m]);
-        } else if ((opcode & 0xF0FF) == 0x4015) {
-            // CMP/PL Rn — T = (Rn > 0), signed.
-            setT(r[n] > 0);
-        } else if ((opcode & 0xF0FF) == 0x4011) {
-            // CMP/PZ Rn — T = (Rn >= 0), signed.
-            setT(r[n] >= 0);
-        } else if ((opcode & 0xF00F) == 0x200C) {
-            // CMP/STR Rm,Rn — T = 1 if ANY of the 4 corresponding bytes of Rn/Rm are equal
-            // (useful for zero-terminated-string length/matching: XOR then look for a zero byte).
-            int diff = r[n] ^ r[m];
-            setT((diff & 0xFF000000) == 0 || (diff & 0x00FF0000) == 0
-                    || (diff & 0x0000FF00) == 0 || (diff & 0x000000FF) == 0);
-        } else if ((opcode & 0xF00F) == 0x2008) {
-            // TST Rm,Rn — T = ((Rn & Rm) == 0). Contents of Rn/Rm unchanged.
-            setT((r[n] & r[m]) == 0);
-        } else if ((opcode & 0xFF00) == 0xC800) {
-            // TST #imm,R0 — T = ((R0 & zero-extended imm) == 0).
-            setT((r[0] & (imm8 & 0xFF)) == 0);
-        } else if ((opcode & 0xF0FF) == 0x4010) {
-            // DT Rn — Rn -= 1; T = (Rn == 0). The SH-4's decrement-and-test loop-counter idiom
-            // (paired with BF to loop while nonzero — see the DIV1 examples this codebase
-            // already references for the same "count down, test, branch" pattern).
-            r[n] = r[n] - 1;
-            setT(r[n] == 0);
-        } else if ((opcode & 0xF00F) == 0x600E) {
-            // EXTS.B Rm,Rn — sign-extend Rm's low BYTE to 32 bits.
-            // Java's (byte) cast truncates to the low 8 bits as a signed byte, and assigning
-            // that back to an int widens it with sign extension — exactly what's needed here.
-            r[n] = (byte) r[m];
-        } else if ((opcode & 0xF00F) == 0x600F) {
-            // EXTS.W Rm,Rn — sign-extend Rm's low WORD to 32 bits (same (byte)-cast trick, but 16-bit).
-            r[n] = (short) r[m];
-        } else if ((opcode & 0xF00F) == 0x600C) {
-            // EXTU.B Rm,Rn — zero-extend Rm's low BYTE to 32 bits.
-            r[n] = r[m] & 0xFF;
-        } else if ((opcode & 0xF00F) == 0x600D) {
-            // EXTU.W Rm,Rn — zero-extend Rm's low WORD to 32 bits.
-            r[n] = r[m] & 0xFFFF;
-        } else if ((opcode & 0xF00F) == 0x6008) {
-            // SWAP.B Rm,Rn — swaps Rm's low two BYTES; upper 16 bits pass through unchanged.
-            int upper16 = r[m] & 0xFFFF0000;
-            int lowByte = r[m] & 0xFF;
-            int nextByte = (r[m] >>> 8) & 0xFF;
-            r[n] = upper16 | (lowByte << 8) | nextByte;
-        } else if ((opcode & 0xF00F) == 0x6009) {
-            // SWAP.W Rm,Rn — swaps Rm's upper and lower 16-bit halves.
-            r[n] = (r[m] << 16) | ((r[m] >>> 16) & 0xFFFF);
-        } else if ((opcode & 0xF00F) == 0x200D) {
-            // XTRCT Rm,Rn — extracts the middle 32 bits of the 64-bit value formed by
-            // concatenating Rm (high 32) and Rn (low 32): Rm's low 16 bits become the result's
-            // high 16, and Rn's high 16 bits become the result's low 16.
-            r[n] = (r[m] << 16) | ((r[n] >>> 16) & 0xFFFF);
-        } else if ((opcode & 0xF00F) == 0x300E) {
-            // ADDC Rm,Rn — Rn = Rn + Rm + T (unsigned), carry-out -> T. Used to chain
-            // additions wider than 32 bits. Computed via a 64-bit intermediate so the carry
-            // is just "did the true sum exceed 32 bits" — semantically identical to the SH-4
-            // manual's own two-step unsigned-overflow check, expressed without relying on
-            // any Java-specific unsigned-comparison trick.
-            long sum = (r[n] & 0xFFFFFFFFL) + (r[m] & 0xFFFFFFFFL) + (tFlag() ? 1 : 0);
-            setT(sum > 0xFFFFFFFFL);
-            r[n] = (int) sum;
-        } else if ((opcode & 0xF00F) == 0x300A) {
-            // SUBC Rm,Rn — Rn = Rn - Rm - T (unsigned), borrow-out -> T. The subtraction
-            // counterpart of ADDC, for chaining subtractions wider than 32 bits.
-            long diff = (r[n] & 0xFFFFFFFFL) - (r[m] & 0xFFFFFFFFL) - (tFlag() ? 1 : 0);
-            setT(diff < 0);
-            r[n] = (int) diff;
-        } else if ((opcode & 0xF00F) == 0x600A) {
-            // NEGC Rm,Rn — Rn = 0 - Rm - T (unsigned), borrow-out -> T. Equivalent to SUBC
-            // with Rn's "before" value implicitly 0; also usable to sign-invert a value wider
-            // than 32 bits (see the SH-4 manual's own worked multi-word negation example).
-            long diff = 0L - (r[m] & 0xFFFFFFFFL) - (tFlag() ? 1 : 0);
-            setT(diff < 0);
-            r[n] = (int) diff;
-        } else if ((opcode & 0xF00F) == 0x300F) {
-            // ADDV Rm,Rn — Rn += Rm (signed), SIGNED overflow -> T. Direct port of the SH-4
-            // manual's own algorithm (same-sign operands producing a different-sign result),
-            // rather than a from-scratch reimplementation, since that's the actual documented
-            // definition of "signed overflow" here rather than something to re-derive.
-            int addDest = (r[n] >= 0) ? 0 : 1;
-            int addSrc = (r[m] >= 0) ? 0 : 1;
-            addSrc += addDest;
-            r[n] = r[n] + r[m];
-            int addAns = (r[n] >= 0) ? 0 : 1;
-            addAns += addDest;
-            setT((addSrc == 0 || addSrc == 2) && addAns == 1);
-        } else if ((opcode & 0xF00F) == 0x300B) {
-            // SUBV Rm,Rn — Rn -= Rm (signed), SIGNED underflow -> T. Direct port of the SH-4
-            // manual's own algorithm, mirroring ADDV above.
-            int subDest = (r[n] >= 0) ? 0 : 1;
-            int subSrc = (r[m] >= 0) ? 0 : 1;
-            subSrc += subDest;
-            r[n] = r[n] - r[m];
-            int subAns = (r[n] >= 0) ? 0 : 1;
-            subAns += subDest;
-            setT(subSrc == 1 && subAns == 1);
         } else if ((opcode & 0xFF00) == 0x8900) {
             // BT label — branch if T is set. NOT a delayed branch on real hardware.
             if (tFlag()) {
@@ -468,148 +382,33 @@ public class Sh4Cpu {
             if (!tFlag()) {
                 nextPc = thisPc + 4 + signExtend8(imm8) * 2;
             }
+        } else {
+            return null;
+        }
+        return nextPc;
+    }
+
+    /**
+     * Tries each datatransfer-family instruction. Returns the (possibly
+     * updated, e.g. for a taken branch) next PC if {@code opcode} matched one
+     * of this family's instructions, or {@code null} if none matched (the
+     * caller then tries the next family) -- purely a mechanical split of what
+     * used to be one large if/else chain in {@link #executeNonDelayedInstruction};
+     * no opcode mask/value/logic differs from before this split.
+     */
+    private Integer tryExecuteDataTransfer(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
+        if ((opcode & 0xF000) == 0xE000) {
+            // MOV #imm,Rn — load sign-extended 8-bit immediate.
+            r[n] = signExtend8(imm8);
+        } else if ((opcode & 0xF00F) == 0x6003) {
+            // MOV Rm,Rn
+            r[n] = r[m];
         } else if ((opcode & 0xF00F) == 0x2002) {
             // MOV.L Rm,@Rn — store Rm's value to the address held in Rn.
             bus.write32(Integer.toUnsignedLong(r[n]), r[m]);
         } else if ((opcode & 0xF00F) == 0x6002) {
             // MOV.L @Rm,Rn — load from the address held in Rm into Rn.
             r[n] = bus.read32(Integer.toUnsignedLong(r[m]));
-        } else if ((opcode & 0xF00F) == 0x2009) {
-            // AND Rm,Rn
-            r[n] = r[n] & r[m];
-        } else if ((opcode & 0xF00F) == 0x200B) {
-            // OR Rm,Rn
-            r[n] = r[n] | r[m];
-        } else if ((opcode & 0xF00F) == 0x200A) {
-            // XOR Rm,Rn
-            r[n] = r[n] ^ r[m];
-        } else if ((opcode & 0xFF00) == 0xC900) {
-            // AND #imm,R0 — logic immediate ops are ZERO-extended, unlike MOV/ADD/CMP's sign-extended immediates.
-            r[0] = r[0] & (imm8 & 0xFF);
-        } else if ((opcode & 0xFF00) == 0xCB00) {
-            // OR #imm,R0 — zero-extended immediate.
-            r[0] = r[0] | (imm8 & 0xFF);
-        } else if ((opcode & 0xFF00) == 0xCA00) {
-            // XOR #imm,R0 — zero-extended immediate.
-            r[0] = r[0] ^ (imm8 & 0xFF);
-        } else if ((opcode & 0xF0FF) == 0x4000) {
-            // SHLL Rn — logical shift left by 1; T = bit shifted out (old MSB).
-            setT((r[n] >>> 31 & 1) != 0);
-            r[n] = r[n] << 1;
-        } else if ((opcode & 0xF0FF) == 0x4001) {
-            // SHLR Rn — logical shift right by 1 (zero-fill); T = bit shifted out (old LSB).
-            setT((r[n] & 1) != 0);
-            r[n] = r[n] >>> 1;
-        } else if ((opcode & 0xF0FF) == 0x4020) {
-            // SHAL Rn — arithmetic shift left by 1. Identical bit behavior to SHLL on real
-            // hardware (there's no difference between logical/arithmetic left shift).
-            setT((r[n] >>> 31 & 1) != 0);
-            r[n] = r[n] << 1;
-        } else if ((opcode & 0xF0FF) == 0x4021) {
-            // SHAR Rn — arithmetic shift right by 1 (sign-extending); T = bit shifted out (old LSB).
-            setT((r[n] & 1) != 0);
-            r[n] = r[n] >> 1;
-        } else if ((opcode & 0xF0FF) == 0x4008) {
-            // SHLL2 Rn — logical shift left by 2. Unlike SHLL/SHAL above, the fixed-amount
-            // shift family (SHLL2/8/16, SHLR2/8/16) does NOT touch T on real hardware —
-            // confirmed against two independent sources (SH7091 header used by real Dreamcast
-            // homebrew, and the authoritative SH opcode table already used this session).
-            // Found necessary by a real Sonic Adventure dump (opcode 0x4E08) after it executed
-            // 12,791,752 real SH-4 instructions correctly — see docs/STATUS.md/CHANGELOG.md.
-            r[n] = r[n] << 2;
-        } else if ((opcode & 0xF0FF) == 0x4018) {
-            // SHLL8 Rn — logical shift left by 8. No T effect — see SHLL2 above.
-            r[n] = r[n] << 8;
-        } else if ((opcode & 0xF0FF) == 0x4028) {
-            // SHLL16 Rn — logical shift left by 16. No T effect — see SHLL2 above.
-            r[n] = r[n] << 16;
-        } else if ((opcode & 0xF0FF) == 0x4009) {
-            // SHLR2 Rn — logical shift right by 2 (zero-fill). No T effect — see SHLL2 above.
-            r[n] = r[n] >>> 2;
-        } else if ((opcode & 0xF0FF) == 0x4019) {
-            // SHLR8 Rn — logical shift right by 8 (zero-fill). No T effect — see SHLL2 above.
-            r[n] = r[n] >>> 8;
-        } else if ((opcode & 0xF0FF) == 0x4029) {
-            // SHLR16 Rn — logical shift right by 16 (zero-fill). No T effect — see SHLL2 above.
-            r[n] = r[n] >>> 16;
-        } else if ((opcode & 0xF0FF) == 0x4024) {
-            // ROTCL Rn — rotate left through T: new T = old MSB; Rn = (Rn<<1) | old T.
-            // Used together with DIV1 to fold each computed quotient bit into a
-            // separate accumulator register — see the DIV1 handling below.
-            boolean newT = (r[n] & 0x80000000) != 0;
-            r[n] = (r[n] << 1) | (tFlag() ? 1 : 0);
-            setT(newT);
-        } else if ((opcode & 0xF0FF) == 0x4025) {
-            // ROTCR Rn — rotate right through T: new T = old bit 0; Rn = (Rn>>>1) | (old T << 31).
-            // The mirror image of ROTCL above (same 33-bit-rotate-through-T idea, opposite direction).
-            boolean newT = (r[n] & 1) != 0;
-            r[n] = (r[n] >>> 1) | (tFlag() ? 0x80000000 : 0);
-            setT(newT);
-        } else if ((opcode & 0xF0FF) == 0x4004) {
-            // ROTL Rn — plain (non-T-chained) rotate left: T = old MSB; Rn = (Rn<<1) | T.
-            // Unlike ROTCL, the bit rotated out becomes BOTH the new T and the new LSB
-            // (it doesn't matter what T held before this ran).
-            boolean msb = (r[n] & 0x80000000) != 0;
-            r[n] = (r[n] << 1) | (msb ? 1 : 0);
-            setT(msb);
-        } else if ((opcode & 0xF0FF) == 0x4005) {
-            // ROTR Rn — plain rotate right: T = old LSB; Rn = (Rn>>>1) | (T << 31).
-            boolean lsb = (r[n] & 1) != 0;
-            r[n] = (r[n] >>> 1) | (lsb ? 0x80000000 : 0);
-            setT(lsb);
-        } else if ((opcode & 0xF00F) == 0x400C) {
-            // SHAD Rm,Rn — dynamic ARITHMETIC shift. Confirmed against the authoritative SH
-            // opcode table (shared-ptr.com/sh_insns.html, the same reference already used for
-            // DIV1's Q/M-flag logic) rather than reasoned out from Java's own shift semantics —
-            // that reasoning is what produced the bug this replaces (see CHANGELOG).
-            //
-            // Per the reference's own SHAD() pseudocode, the shift amount is NOT simply "Rm, or
-            // -Rm if negative" — it's derived from Rm's low 5 bits specifically:
-            //   sgn = Rm & 0x80000000
-            //   if (sgn == 0):            Rn <<= (Rm & 0x1F)
-            //   else if ((Rm & 0x1F)==0):  Rn = (Rn's MSB set) ? 0xFFFFFFFF : 0   <- FULL sign-fill
-            //   else:                      Rn = Rn >> ((~Rm & 0x1F) + 1)          <- arithmetic
-            //
-            // The middle case (Rm negative AND a multiple of exactly 32, e.g. -32, -64, ...,
-            // down to Integer.MIN_VALUE) is the one this interpreter previously got wrong: the
-            // old code computed "r[n] >> (-r[m])" directly, and Java's ">>" operator masks its
-            // shift count to the low 5 bits for an int operand — so ">> 32" silently became
-            // ">> 0", a no-op, instead of the spec's required FULL sign-extension fill. A
-            // previous version of this comment reasoned about the Integer.MIN_VALUE edge case
-            // and concluded "no special-casing is needed" — that conclusion was wrong: it
-            // confirmed the arithmetic coincidence (that case also lands on a Java no-op) without
-            // checking it against what the spec actually requires there (full sign-fill, not a
-            // no-op). See Sh4CpuTest's shad/shldFullSignFillWhenRmIsExactMultipleOf32* tests,
-            // which specifically regression-test this the previous implementation got wrong.
-            if ((r[m] & 0x80000000) == 0) {
-                r[n] = r[n] << (r[m] & 0x1F);
-            } else if ((r[m] & 0x1F) == 0) {
-                r[n] = (r[n] & 0x80000000) != 0 ? 0xFFFFFFFF : 0x00000000;
-            } else {
-                r[n] = r[n] >> ((~r[m] & 0x1F) + 1);
-            }
-        } else if ((opcode & 0xF00F) == 0x400D) {
-            // SHLD Rm,Rn — same shape as SHAD above (same reference, same bug class fixed
-            // alongside it), but LOGICAL (zero-filling) rather than arithmetic: the full-fill
-            // case always yields 0 (not conditionally 0/0xFFFFFFFF), and the ordinary right-shift
-            // case zero-fills instead of sign-extending.
-            if ((r[m] & 0x80000000) == 0) {
-                r[n] = r[n] << (r[m] & 0x1F);
-            } else if ((r[m] & 0x1F) == 0) {
-                r[n] = 0;
-            } else {
-                r[n] = r[n] >>> ((~r[m] & 0x1F) + 1);
-            }
-        } else if ((opcode & 0xF0FF) == 0x401B) {
-            // TAS.B @Rn — atomic (on real hardware) test-and-set: reads the byte at @Rn,
-            // T = (that byte == 0), then writes the byte back with its MSB forced to 1
-            // (0x80), regardless of T. The classic single-instruction lock/mutex primitive.
-            // This interpreter runs single-threaded, so there's no real bus lock to model —
-            // the read-test-write sequence is inherently atomic here already.
-            long address = Integer.toUnsignedLong(r[n]);
-            byte value = bus.read8(address);
-            setT(value == 0);
-            bus.write8(address, (byte) (value | 0x80));
         } else if ((opcode & 0xF00F) == 0x2000) {
             // MOV.B Rm,@Rn — store the low byte of Rm to the address held in Rn.
             bus.write8(Integer.toUnsignedLong(r[n]), (byte) r[m]);
@@ -734,6 +533,80 @@ public class Sh4Cpu {
             // PC-masking rule as MOV.L @(disp,PC),Rn.
             int disp8 = opcode & 0xFF;
             r[0] = (thisPc & ~3) + 4 + disp8 * 4;
+        } else {
+            return null;
+        }
+        return nextPc;
+    }
+
+    /**
+     * Tries each arithmetic-family instruction. Returns the (possibly
+     * updated, e.g. for a taken branch) next PC if {@code opcode} matched one
+     * of this family's instructions, or {@code null} if none matched (the
+     * caller then tries the next family) -- purely a mechanical split of what
+     * used to be one large if/else chain in {@link #executeNonDelayedInstruction};
+     * no opcode mask/value/logic differs from before this split.
+     */
+    private Integer tryExecuteArithmetic(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
+        if ((opcode & 0xF000) == 0x7000) {
+            // ADD #imm,Rn — Rn += sign-extended 8-bit immediate.
+            r[n] = r[n] + signExtend8(imm8);
+        } else if ((opcode & 0xF00F) == 0x300C) {
+            // ADD Rm,Rn
+            r[n] = r[n] + r[m];
+        } else if ((opcode & 0xF00F) == 0x3008) {
+            // SUB Rm,Rn
+            r[n] = r[n] - r[m];
+        } else if ((opcode & 0xF0FF) == 0x4010) {
+            // DT Rn — Rn -= 1; T = (Rn == 0). The SH-4's decrement-and-test loop-counter idiom
+            // (paired with BF to loop while nonzero — see the DIV1 examples this codebase
+            // already references for the same "count down, test, branch" pattern).
+            r[n] = r[n] - 1;
+            setT(r[n] == 0);
+        } else if ((opcode & 0xF00F) == 0x300E) {
+            // ADDC Rm,Rn — Rn = Rn + Rm + T (unsigned), carry-out -> T. Used to chain
+            // additions wider than 32 bits. Computed via a 64-bit intermediate so the carry
+            // is just "did the true sum exceed 32 bits" — semantically identical to the SH-4
+            // manual's own two-step unsigned-overflow check, expressed without relying on
+            // any Java-specific unsigned-comparison trick.
+            long sum = (r[n] & 0xFFFFFFFFL) + (r[m] & 0xFFFFFFFFL) + (tFlag() ? 1 : 0);
+            setT(sum > 0xFFFFFFFFL);
+            r[n] = (int) sum;
+        } else if ((opcode & 0xF00F) == 0x300A) {
+            // SUBC Rm,Rn — Rn = Rn - Rm - T (unsigned), borrow-out -> T. The subtraction
+            // counterpart of ADDC, for chaining subtractions wider than 32 bits.
+            long diff = (r[n] & 0xFFFFFFFFL) - (r[m] & 0xFFFFFFFFL) - (tFlag() ? 1 : 0);
+            setT(diff < 0);
+            r[n] = (int) diff;
+        } else if ((opcode & 0xF00F) == 0x600A) {
+            // NEGC Rm,Rn — Rn = 0 - Rm - T (unsigned), borrow-out -> T. Equivalent to SUBC
+            // with Rn's "before" value implicitly 0; also usable to sign-invert a value wider
+            // than 32 bits (see the SH-4 manual's own worked multi-word negation example).
+            long diff = 0L - (r[m] & 0xFFFFFFFFL) - (tFlag() ? 1 : 0);
+            setT(diff < 0);
+            r[n] = (int) diff;
+        } else if ((opcode & 0xF00F) == 0x300F) {
+            // ADDV Rm,Rn — Rn += Rm (signed), SIGNED overflow -> T. Direct port of the SH-4
+            // manual's own algorithm (same-sign operands producing a different-sign result),
+            // rather than a from-scratch reimplementation, since that's the actual documented
+            // definition of "signed overflow" here rather than something to re-derive.
+            int addDest = (r[n] >= 0) ? 0 : 1;
+            int addSrc = (r[m] >= 0) ? 0 : 1;
+            addSrc += addDest;
+            r[n] = r[n] + r[m];
+            int addAns = (r[n] >= 0) ? 0 : 1;
+            addAns += addDest;
+            setT((addSrc == 0 || addSrc == 2) && addAns == 1);
+        } else if ((opcode & 0xF00F) == 0x300B) {
+            // SUBV Rm,Rn — Rn -= Rm (signed), SIGNED underflow -> T. Direct port of the SH-4
+            // manual's own algorithm, mirroring ADDV above.
+            int subDest = (r[n] >= 0) ? 0 : 1;
+            int subSrc = (r[m] >= 0) ? 0 : 1;
+            subSrc += subDest;
+            r[n] = r[n] - r[m];
+            int subAns = (r[n] >= 0) ? 0 : 1;
+            subAns += subDest;
+            setT(subSrc == 1 && subAns == 1);
         } else if ((opcode & 0xF00F) == 0x6007) {
             // NOT Rm,Rn — Rn = bitwise complement of Rm.
             r[n] = ~r[m];
@@ -815,6 +688,266 @@ public class Sh4Cpu {
                 }
             }
             setT(qFlag == mFlag);
+        } else {
+            return null;
+        }
+        return nextPc;
+    }
+
+    /**
+     * Tries each logic-family instruction. Returns the (possibly
+     * updated, e.g. for a taken branch) next PC if {@code opcode} matched one
+     * of this family's instructions, or {@code null} if none matched (the
+     * caller then tries the next family) -- purely a mechanical split of what
+     * used to be one large if/else chain in {@link #executeNonDelayedInstruction};
+     * no opcode mask/value/logic differs from before this split.
+     */
+    private Integer tryExecuteLogic(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
+        if ((opcode & 0xF00F) == 0x3000) {
+            // CMP/EQ Rm,Rn — T = (Rn == Rm)
+            setT(r[n] == r[m]);
+        } else if ((opcode & 0xFF00) == 0x8800) {
+            // CMP/EQ #imm,R0 — T = (R0 == sign-extended 8-bit immediate)
+            setT(r[0] == signExtend8(imm8));
+        } else if ((opcode & 0xF00F) == 0x3002) {
+            // CMP/HS Rm,Rn — T = (Rn >= Rm), UNSIGNED comparison.
+            setT(Integer.compareUnsigned(r[n], r[m]) >= 0);
+        } else if ((opcode & 0xF00F) == 0x3003) {
+            // CMP/GE Rm,Rn — T = (Rn >= Rm), signed comparison (Java's int is already signed).
+            setT(r[n] >= r[m]);
+        } else if ((opcode & 0xF00F) == 0x3006) {
+            // CMP/HI Rm,Rn — T = (Rn > Rm), UNSIGNED comparison.
+            setT(Integer.compareUnsigned(r[n], r[m]) > 0);
+        } else if ((opcode & 0xF00F) == 0x3007) {
+            // CMP/GT Rm,Rn — T = (Rn > Rm), signed comparison.
+            setT(r[n] > r[m]);
+        } else if ((opcode & 0xF0FF) == 0x4015) {
+            // CMP/PL Rn — T = (Rn > 0), signed.
+            setT(r[n] > 0);
+        } else if ((opcode & 0xF0FF) == 0x4011) {
+            // CMP/PZ Rn — T = (Rn >= 0), signed.
+            setT(r[n] >= 0);
+        } else if ((opcode & 0xF00F) == 0x200C) {
+            // CMP/STR Rm,Rn — T = 1 if ANY of the 4 corresponding bytes of Rn/Rm are equal
+            // (useful for zero-terminated-string length/matching: XOR then look for a zero byte).
+            int diff = r[n] ^ r[m];
+            setT((diff & 0xFF000000) == 0 || (diff & 0x00FF0000) == 0
+                    || (diff & 0x0000FF00) == 0 || (diff & 0x000000FF) == 0);
+        } else if ((opcode & 0xF00F) == 0x2008) {
+            // TST Rm,Rn — T = ((Rn & Rm) == 0). Contents of Rn/Rm unchanged.
+            setT((r[n] & r[m]) == 0);
+        } else if ((opcode & 0xFF00) == 0xC800) {
+            // TST #imm,R0 — T = ((R0 & zero-extended imm) == 0).
+            setT((r[0] & (imm8 & 0xFF)) == 0);
+        } else if ((opcode & 0xF00F) == 0x2009) {
+            // AND Rm,Rn
+            r[n] = r[n] & r[m];
+        } else if ((opcode & 0xF00F) == 0x200B) {
+            // OR Rm,Rn
+            r[n] = r[n] | r[m];
+        } else if ((opcode & 0xF00F) == 0x200A) {
+            // XOR Rm,Rn
+            r[n] = r[n] ^ r[m];
+        } else if ((opcode & 0xFF00) == 0xC900) {
+            // AND #imm,R0 — logic immediate ops are ZERO-extended, unlike MOV/ADD/CMP's sign-extended immediates.
+            r[0] = r[0] & (imm8 & 0xFF);
+        } else if ((opcode & 0xFF00) == 0xCB00) {
+            // OR #imm,R0 — zero-extended immediate.
+            r[0] = r[0] | (imm8 & 0xFF);
+        } else if ((opcode & 0xFF00) == 0xCA00) {
+            // XOR #imm,R0 — zero-extended immediate.
+            r[0] = r[0] ^ (imm8 & 0xFF);
+        } else {
+            return null;
+        }
+        return nextPc;
+    }
+
+    /**
+     * Tries each shiftrotate-family instruction. Returns the (possibly
+     * updated, e.g. for a taken branch) next PC if {@code opcode} matched one
+     * of this family's instructions, or {@code null} if none matched (the
+     * caller then tries the next family) -- purely a mechanical split of what
+     * used to be one large if/else chain in {@link #executeNonDelayedInstruction};
+     * no opcode mask/value/logic differs from before this split.
+     */
+    private Integer tryExecuteShiftRotate(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
+        if ((opcode & 0xF0FF) == 0x4000) {
+            // SHLL Rn — logical shift left by 1; T = bit shifted out (old MSB).
+            setT((r[n] >>> 31 & 1) != 0);
+            r[n] = r[n] << 1;
+        } else if ((opcode & 0xF0FF) == 0x4001) {
+            // SHLR Rn — logical shift right by 1 (zero-fill); T = bit shifted out (old LSB).
+            setT((r[n] & 1) != 0);
+            r[n] = r[n] >>> 1;
+        } else if ((opcode & 0xF0FF) == 0x4020) {
+            // SHAL Rn — arithmetic shift left by 1. Identical bit behavior to SHLL on real
+            // hardware (there's no difference between logical/arithmetic left shift).
+            setT((r[n] >>> 31 & 1) != 0);
+            r[n] = r[n] << 1;
+        } else if ((opcode & 0xF0FF) == 0x4021) {
+            // SHAR Rn — arithmetic shift right by 1 (sign-extending); T = bit shifted out (old LSB).
+            setT((r[n] & 1) != 0);
+            r[n] = r[n] >> 1;
+        } else if ((opcode & 0xF0FF) == 0x4008) {
+            // SHLL2 Rn — logical shift left by 2. Unlike SHLL/SHAL above, the fixed-amount
+            // shift family (SHLL2/8/16, SHLR2/8/16) does NOT touch T on real hardware —
+            // confirmed against two independent sources (SH7091 header used by real Dreamcast
+            // homebrew, and the authoritative SH opcode table already used this session).
+            // Found necessary by a real Sonic Adventure dump (opcode 0x4E08) after it executed
+            // 12,791,752 real SH-4 instructions correctly — see docs/STATUS.md/CHANGELOG.md.
+            r[n] = r[n] << 2;
+        } else if ((opcode & 0xF0FF) == 0x4018) {
+            // SHLL8 Rn — logical shift left by 8. No T effect — see SHLL2 above.
+            r[n] = r[n] << 8;
+        } else if ((opcode & 0xF0FF) == 0x4028) {
+            // SHLL16 Rn — logical shift left by 16. No T effect — see SHLL2 above.
+            r[n] = r[n] << 16;
+        } else if ((opcode & 0xF0FF) == 0x4009) {
+            // SHLR2 Rn — logical shift right by 2 (zero-fill). No T effect — see SHLL2 above.
+            r[n] = r[n] >>> 2;
+        } else if ((opcode & 0xF0FF) == 0x4019) {
+            // SHLR8 Rn — logical shift right by 8 (zero-fill). No T effect — see SHLL2 above.
+            r[n] = r[n] >>> 8;
+        } else if ((opcode & 0xF0FF) == 0x4029) {
+            // SHLR16 Rn — logical shift right by 16 (zero-fill). No T effect — see SHLL2 above.
+            r[n] = r[n] >>> 16;
+        } else if ((opcode & 0xF0FF) == 0x4024) {
+            // ROTCL Rn — rotate left through T: new T = old MSB; Rn = (Rn<<1) | old T.
+            // Used together with DIV1 to fold each computed quotient bit into a
+            // separate accumulator register — see the DIV1 handling below.
+            boolean newT = (r[n] & 0x80000000) != 0;
+            r[n] = (r[n] << 1) | (tFlag() ? 1 : 0);
+            setT(newT);
+        } else if ((opcode & 0xF0FF) == 0x4025) {
+            // ROTCR Rn — rotate right through T: new T = old bit 0; Rn = (Rn>>>1) | (old T << 31).
+            // The mirror image of ROTCL above (same 33-bit-rotate-through-T idea, opposite direction).
+            boolean newT = (r[n] & 1) != 0;
+            r[n] = (r[n] >>> 1) | (tFlag() ? 0x80000000 : 0);
+            setT(newT);
+        } else if ((opcode & 0xF0FF) == 0x4004) {
+            // ROTL Rn — plain (non-T-chained) rotate left: T = old MSB; Rn = (Rn<<1) | T.
+            // Unlike ROTCL, the bit rotated out becomes BOTH the new T and the new LSB
+            // (it doesn't matter what T held before this ran).
+            boolean msb = (r[n] & 0x80000000) != 0;
+            r[n] = (r[n] << 1) | (msb ? 1 : 0);
+            setT(msb);
+        } else if ((opcode & 0xF0FF) == 0x4005) {
+            // ROTR Rn — plain rotate right: T = old LSB; Rn = (Rn>>>1) | (T << 31).
+            boolean lsb = (r[n] & 1) != 0;
+            r[n] = (r[n] >>> 1) | (lsb ? 0x80000000 : 0);
+            setT(lsb);
+        } else if ((opcode & 0xF00F) == 0x400C) {
+            // SHAD Rm,Rn — dynamic ARITHMETIC shift. Confirmed against the authoritative SH
+            // opcode table (shared-ptr.com/sh_insns.html, the same reference already used for
+            // DIV1's Q/M-flag logic) rather than reasoned out from Java's own shift semantics —
+            // that reasoning is what produced the bug this replaces (see CHANGELOG).
+            //
+            // Per the reference's own SHAD() pseudocode, the shift amount is NOT simply "Rm, or
+            // -Rm if negative" — it's derived from Rm's low 5 bits specifically:
+            //   sgn = Rm & 0x80000000
+            //   if (sgn == 0):            Rn <<= (Rm & 0x1F)
+            //   else if ((Rm & 0x1F)==0):  Rn = (Rn's MSB set) ? 0xFFFFFFFF : 0   <- FULL sign-fill
+            //   else:                      Rn = Rn >> ((~Rm & 0x1F) + 1)          <- arithmetic
+            //
+            // The middle case (Rm negative AND a multiple of exactly 32, e.g. -32, -64, ...,
+            // down to Integer.MIN_VALUE) is the one this interpreter previously got wrong: the
+            // old code computed "r[n] >> (-r[m])" directly, and Java's ">>" operator masks its
+            // shift count to the low 5 bits for an int operand — so ">> 32" silently became
+            // ">> 0", a no-op, instead of the spec's required FULL sign-extension fill. A
+            // previous version of this comment reasoned about the Integer.MIN_VALUE edge case
+            // and concluded "no special-casing is needed" — that conclusion was wrong: it
+            // confirmed the arithmetic coincidence (that case also lands on a Java no-op) without
+            // checking it against what the spec actually requires there (full sign-fill, not a
+            // no-op). See Sh4CpuTest's shad/shldFullSignFillWhenRmIsExactMultipleOf32* tests,
+            // which specifically regression-test this the previous implementation got wrong.
+            if ((r[m] & 0x80000000) == 0) {
+                r[n] = r[n] << (r[m] & 0x1F);
+            } else if ((r[m] & 0x1F) == 0) {
+                r[n] = (r[n] & 0x80000000) != 0 ? 0xFFFFFFFF : 0x00000000;
+            } else {
+                r[n] = r[n] >> ((~r[m] & 0x1F) + 1);
+            }
+        } else if ((opcode & 0xF00F) == 0x400D) {
+            // SHLD Rm,Rn — same shape as SHAD above (same reference, same bug class fixed
+            // alongside it), but LOGICAL (zero-filling) rather than arithmetic: the full-fill
+            // case always yields 0 (not conditionally 0/0xFFFFFFFF), and the ordinary right-shift
+            // case zero-fills instead of sign-extending.
+            if ((r[m] & 0x80000000) == 0) {
+                r[n] = r[n] << (r[m] & 0x1F);
+            } else if ((r[m] & 0x1F) == 0) {
+                r[n] = 0;
+            } else {
+                r[n] = r[n] >>> ((~r[m] & 0x1F) + 1);
+            }
+        } else {
+            return null;
+        }
+        return nextPc;
+    }
+
+    /**
+     * Tries each extendswap-family instruction. Returns the (possibly
+     * updated, e.g. for a taken branch) next PC if {@code opcode} matched one
+     * of this family's instructions, or {@code null} if none matched (the
+     * caller then tries the next family) -- purely a mechanical split of what
+     * used to be one large if/else chain in {@link #executeNonDelayedInstruction};
+     * no opcode mask/value/logic differs from before this split.
+     */
+    private Integer tryExecuteExtendSwap(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
+        if ((opcode & 0xF00F) == 0x600E) {
+            // EXTS.B Rm,Rn — sign-extend Rm's low BYTE to 32 bits.
+            // Java's (byte) cast truncates to the low 8 bits as a signed byte, and assigning
+            // that back to an int widens it with sign extension — exactly what's needed here.
+            r[n] = (byte) r[m];
+        } else if ((opcode & 0xF00F) == 0x600F) {
+            // EXTS.W Rm,Rn — sign-extend Rm's low WORD to 32 bits (same (byte)-cast trick, but 16-bit).
+            r[n] = (short) r[m];
+        } else if ((opcode & 0xF00F) == 0x600C) {
+            // EXTU.B Rm,Rn — zero-extend Rm's low BYTE to 32 bits.
+            r[n] = r[m] & 0xFF;
+        } else if ((opcode & 0xF00F) == 0x600D) {
+            // EXTU.W Rm,Rn — zero-extend Rm's low WORD to 32 bits.
+            r[n] = r[m] & 0xFFFF;
+        } else if ((opcode & 0xF00F) == 0x6008) {
+            // SWAP.B Rm,Rn — swaps Rm's low two BYTES; upper 16 bits pass through unchanged.
+            int upper16 = r[m] & 0xFFFF0000;
+            int lowByte = r[m] & 0xFF;
+            int nextByte = (r[m] >>> 8) & 0xFF;
+            r[n] = upper16 | (lowByte << 8) | nextByte;
+        } else if ((opcode & 0xF00F) == 0x6009) {
+            // SWAP.W Rm,Rn — swaps Rm's upper and lower 16-bit halves.
+            r[n] = (r[m] << 16) | ((r[m] >>> 16) & 0xFFFF);
+        } else if ((opcode & 0xF00F) == 0x200D) {
+            // XTRCT Rm,Rn — extracts the middle 32 bits of the 64-bit value formed by
+            // concatenating Rm (high 32) and Rn (low 32): Rm's low 16 bits become the result's
+            // high 16, and Rn's high 16 bits become the result's low 16.
+            r[n] = (r[m] << 16) | ((r[n] >>> 16) & 0xFFFF);
+        } else {
+            return null;
+        }
+        return nextPc;
+    }
+
+    /**
+     * Tries each systemcontrol-family instruction. Returns the (possibly
+     * updated, e.g. for a taken branch) next PC if {@code opcode} matched one
+     * of this family's instructions, or {@code null} if none matched (the
+     * caller then tries the next family) -- purely a mechanical split of what
+     * used to be one large if/else chain in {@link #executeNonDelayedInstruction};
+     * no opcode mask/value/logic differs from before this split.
+     */
+    private Integer tryExecuteSystemControl(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
+        if ((opcode & 0xF0FF) == 0x401B) {
+            // TAS.B @Rn — atomic (on real hardware) test-and-set: reads the byte at @Rn,
+            // T = (that byte == 0), then writes the byte back with its MSB forced to 1
+            // (0x80), regardless of T. The classic single-instruction lock/mutex primitive.
+            // This interpreter runs single-threaded, so there's no real bus lock to model —
+            // the read-test-write sequence is inherently atomic here already.
+            long address = Integer.toUnsignedLong(r[n]);
+            byte value = bus.read8(address);
+            setT(value == 0);
+            bus.write8(address, (byte) (value | 0x80));
         } else if ((opcode & 0xF0FF) == 0x4002) {
             // STS.L MACH,@-Rn — pre-decrement store: Rn -= 4 FIRST, then MACH is written at
             // the new (decremented) Rn. Same "predecrement, then store" shape as MOV.L Rm,@-Rn
@@ -908,10 +1041,8 @@ public class Sh4Cpu {
             spc = nextPc;
             return vbr + 0x100;
         } else {
-            throw new UnsupportedOperationException(String.format(
-                    "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X", opcode, thisPc));
+            return null;
         }
-
         return nextPc;
     }
 
