@@ -1907,6 +1907,79 @@ class Sh4CpuTest {
         assertEquals(-16 >>> 2, cpu.r[0], "logical right shift zero-fills, unlike SHAD's sign-extension");
     }
 
+    // ---- SHAD/SHLD full-sign-fill edge case (Rm an exact multiple of -32) -------------
+    //
+    // Regression tests for a real bug: when Rm is negative AND a multiple of exactly 32
+    // (Rm & 0x1F == 0 -- e.g. -32, -64, ..., or Integer.MIN_VALUE), the SH-4 spec requires a
+    // FULL sign/zero fill (all 0s or all 1s), not "no shift". The previous implementation used
+    // Java's raw ">> (-Rm)"/">>> (-Rm)", whose shift count Java masks to the low 5 bits for an
+    // int operand -- so ">> 32" silently became ">> 0" (a no-op) instead of the required fill.
+    // Confirmed against shared-ptr.com/sh_insns.html's SHAD()/SHLD() pseudocode (the same
+    // reference already used for DIV1's Q/M-flag logic) before fixing.
+
+    @Test
+    void shadFullSignFillToZeroWhenRmIsExactMultipleOf32AndRnIsPositive() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shad(0, 1)); // SHAD R1,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x12345678; // MSB clear
+        cpu.r[1] = -32; // exact multiple of 32, negative -- the case the old code got wrong
+
+        cpu.step();
+
+        assertEquals(0x00000000, cpu.r[0],
+                "Rm=-32 (an exact multiple of 32) must fully sign-fill, not be a no-op; " +
+                        "Rn's MSB was clear, so the fill is all zeros");
+    }
+
+    @Test
+    void shadFullSignFillToAllOnesWhenRmIsExactMultipleOf32AndRnIsNegative() {
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shad(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000001; // MSB set
+        cpu.r[1] = -32;
+
+        cpu.step();
+
+        assertEquals(0xFFFFFFFF, cpu.r[0],
+                "Rm=-32 must fully sign-fill; Rn's MSB was set, so the fill is all ones");
+    }
+
+    @Test
+    void shadFullSignFillForIntegerMinValueRm() {
+        // The exact edge case a previous version of this code's comment reasoned about and
+        // wrongly concluded needed no special-casing (see CHANGELOG for the fix).
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shad(0, 1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x7FFFFFFF; // MSB clear
+        cpu.r[1] = Integer.MIN_VALUE; // 0x80000000 -- also a multiple of 32, per (Rm & 0x1F)==0
+
+        cpu.step();
+
+        assertEquals(0x00000000, cpu.r[0],
+                "Rm=Integer.MIN_VALUE has (Rm & 0x1F)==0 too, so it must also fully sign-fill");
+    }
+
+    @Test
+    void shldFullSignFillIsAlwaysZeroWhenRmIsExactMultipleOf32() {
+        // SHLD's fill is unconditionally 0 in this case (logical), unlike SHAD's
+        // conditional 0/0xFFFFFFFF (arithmetic) -- tested with a negative Rn specifically,
+        // since that is exactly the case that would wrongly come out non-zero if this
+        // mistakenly reused SHAD's sign-dependent fill logic.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, shld(0, 1)); // SHLD R1,R0
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 0x80000001; // MSB set
+        cpu.r[1] = -64; // another exact multiple of 32, not just -32
+
+        cpu.step();
+
+        assertEquals(0x00000000, cpu.r[0],
+                "SHLD's fill is always 0, regardless of Rn's sign, unlike SHAD's");
+    }
+
     @Test
     void tasBSetsTWhenByteIsZeroAndAlwaysSetsMsb() {
         SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);

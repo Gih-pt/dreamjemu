@@ -558,25 +558,47 @@ public class Sh4Cpu {
             r[n] = (r[n] >>> 1) | (lsb ? 0x80000000 : 0);
             setT(lsb);
         } else if ((opcode & 0xF00F) == 0x400C) {
-            // SHAD Rm,Rn — dynamic ARITHMETIC shift: Rm>0 shifts Rn left by (Rm&0x1F); Rm<0
-            // shifts Rn right (sign-extending) by (-Rm&0x1F); Rm==0 leaves Rn unchanged.
-            // Java's <<//>> operators already mask their shift count to the low 5 bits for
-            // an int operand, which is exactly the "&0x1F" the SH-4 spec calls for — including
-            // the edge case Rm==Integer.MIN_VALUE, where "-Rm" itself overflows back to
-            // MIN_VALUE in ordinary 32-bit wraparound arithmetic (same as real hardware would
-            // do), and MIN_VALUE & 0x1F is 0 either way, so no special-casing is needed here.
-            if (r[m] > 0) {
-                r[n] = r[n] << r[m];
-            } else if (r[m] < 0) {
-                r[n] = r[n] >> (-r[m]);
+            // SHAD Rm,Rn — dynamic ARITHMETIC shift. Confirmed against the authoritative SH
+            // opcode table (shared-ptr.com/sh_insns.html, the same reference already used for
+            // DIV1's Q/M-flag logic) rather than reasoned out from Java's own shift semantics —
+            // that reasoning is what produced the bug this replaces (see CHANGELOG).
+            //
+            // Per the reference's own SHAD() pseudocode, the shift amount is NOT simply "Rm, or
+            // -Rm if negative" — it's derived from Rm's low 5 bits specifically:
+            //   sgn = Rm & 0x80000000
+            //   if (sgn == 0):            Rn <<= (Rm & 0x1F)
+            //   else if ((Rm & 0x1F)==0):  Rn = (Rn's MSB set) ? 0xFFFFFFFF : 0   <- FULL sign-fill
+            //   else:                      Rn = Rn >> ((~Rm & 0x1F) + 1)          <- arithmetic
+            //
+            // The middle case (Rm negative AND a multiple of exactly 32, e.g. -32, -64, ...,
+            // down to Integer.MIN_VALUE) is the one this interpreter previously got wrong: the
+            // old code computed "r[n] >> (-r[m])" directly, and Java's ">>" operator masks its
+            // shift count to the low 5 bits for an int operand — so ">> 32" silently became
+            // ">> 0", a no-op, instead of the spec's required FULL sign-extension fill. A
+            // previous version of this comment reasoned about the Integer.MIN_VALUE edge case
+            // and concluded "no special-casing is needed" — that conclusion was wrong: it
+            // confirmed the arithmetic coincidence (that case also lands on a Java no-op) without
+            // checking it against what the spec actually requires there (full sign-fill, not a
+            // no-op). See Sh4CpuTest's shad/shldFullSignFillWhenRmIsExactMultipleOf32* tests,
+            // which specifically regression-test this the previous implementation got wrong.
+            if ((r[m] & 0x80000000) == 0) {
+                r[n] = r[n] << (r[m] & 0x1F);
+            } else if ((r[m] & 0x1F) == 0) {
+                r[n] = (r[n] & 0x80000000) != 0 ? 0xFFFFFFFF : 0x00000000;
+            } else {
+                r[n] = r[n] >> ((~r[m] & 0x1F) + 1);
             }
         } else if ((opcode & 0xF00F) == 0x400D) {
-            // SHLD Rm,Rn — same as SHAD above, but the right-shift case (Rm<0) is LOGICAL
-            // (zero-filling), not arithmetic.
-            if (r[m] > 0) {
-                r[n] = r[n] << r[m];
-            } else if (r[m] < 0) {
-                r[n] = r[n] >>> (-r[m]);
+            // SHLD Rm,Rn — same shape as SHAD above (same reference, same bug class fixed
+            // alongside it), but LOGICAL (zero-filling) rather than arithmetic: the full-fill
+            // case always yields 0 (not conditionally 0/0xFFFFFFFF), and the ordinary right-shift
+            // case zero-fills instead of sign-extending.
+            if ((r[m] & 0x80000000) == 0) {
+                r[n] = r[n] << (r[m] & 0x1F);
+            } else if ((r[m] & 0x1F) == 0) {
+                r[n] = 0;
+            } else {
+                r[n] = r[n] >>> ((~r[m] & 0x1F) + 1);
             }
         } else if ((opcode & 0xF0FF) == 0x401B) {
             // TAS.B @Rn — atomic (on real hardware) test-and-set: reads the byte at @Rn,
