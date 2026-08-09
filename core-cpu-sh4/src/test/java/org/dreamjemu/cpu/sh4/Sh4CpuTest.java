@@ -2070,6 +2070,26 @@ class Sh4CpuTest {
     }
 
     @Test
+    void ldsLPrLoadingZeroStillIncrementsRnAndDoesNotThrow() {
+        // Regression coverage for the LOG.warn diagnostic added 2026-08-08 (see
+        // Sh4Cpu's LDS.L @Rn+,PR comment / docs/STATUS.md's BOOT_RETURN_SENTINEL entry): a real
+        // Sonic Adventure run showed PR being genuinely reloaded to 0 by this instruction. This
+        // doesn't assert on the log line itself (no log-capture harness exists in this project
+        // yet -- see docs/STATUS.md), only that loading a zero value is otherwise handled exactly
+        // like any other value: PR ends up 0, R15 is still incremented, nothing throws.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldsLPr(15));
+        bus.write32(100, 0x00000000);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 100;
+
+        cpu.step();
+
+        assertEquals(0, cpu.pr, "PR should hold the loaded (zero) value, same as any other value");
+        assertEquals(104, cpu.r[15], "R15 should still be incremented by 4, same as the non-zero case");
+    }
+
+    @Test
     void ldsLMachLoadsThenIncrementsRn() {
         SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
         bus.writeInstruction(0, ldsLMach(15));

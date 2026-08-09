@@ -325,8 +325,25 @@ public final class Main {
         // implemented behind each vector (the state-free ones only — flashrom/font-ROM/real
         // GD-ROM command processing are honestly reported as unsupported, not faked).
         BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler biosSyscalls = new BiosSyscallHandler(bus);
 
         Sh4Cpu cpu = new Sh4Cpu(bus, entryPc);
+
+        // Added after a real Sonic Adventure run stopped at PC=0x00000000 (2026-08-04): PR
+        // defaults to 0 (Sh4Cpu's own Java int default), and this BIOS-free HLE boot never sets
+        // it, unlike real hardware's BIOS. See HleBootLoader.BOOT_RETURN_SENTINEL's own Javadoc
+        // for the full reasoning — in short, this lets the eventual RTS that unwinds out of the
+        // boot entry's outermost call frame land somewhere this loop can recognize on purpose
+        // (below) and report as a clean unwind, instead of stopping on an unrecognized PC=0.
+        cpu.pr = HleBootLoader.BOOT_RETURN_SENTINEL;
+
+        // Added 2026-08-09 after the BOOT_RETURN_SENTINEL diagnostic above (see its own comment
+        // just below, and HleBootLoader.INITIAL_STACK_POINTER's Javadoc) revealed the actual root
+        // cause of the real Sonic Adventure run's PC=0 stop: R15 (the stack pointer), like PR,
+        // also defaults to 0 and was never set -- every push from R15=0 wraps around to a huge
+        // address near 0xFFFFFFFF instead of a real RAM address, corrupting whatever real data
+        // (including saved copies of PR) a real stack would have held there.
+        cpu.r[15] = HleBootLoader.INITIAL_STACK_POINTER;
         // Step budget history against the real Sonic Adventure dump, all on 2026-07-31:
         //   100,000    -> reached with no unimplemented instruction hit at all.
         //   5,000,000  -> also reached, twice more (once per LoopDetector refinement below).
@@ -369,6 +386,21 @@ public final class Main {
         int steps = 0;
         try {
             for (; steps < maxSteps; steps++) {
+                if (cpu.pc == HleBootLoader.BOOT_RETURN_SENTINEL) {
+                    // See HleBootLoader.BOOT_RETURN_SENTINEL's Javadoc: this is a clean unwind
+                    // out of the boot entry's outermost call frame, not a crash or a missing
+                    // instruction — recognized on purpose, not stumbled into like the PC=0 case
+                    // this replaces (see the PC==0 branch in the catch block below, kept as a
+                    // fallback in case PR ever legitimately ends up 0 some other way).
+                    System.out.println();
+                    System.out.println("Execution returned cleanly to the boot-entry sentinel after " + steps
+                            + " step(s) -");
+                    System.out.println("this is the boot entry's outermost RTS unwinding out, matching real hardware's");
+                    System.out.println("own call/return convention, not a crash or a missing instruction. See");
+                    System.out.println("HleBootLoader.BOOT_RETURN_SENTINEL's Javadoc and docs/STATUS.md.");
+                    printRecentHistory(pcRing, opcodeRing, ringPushes, ringCapacity, 40);
+                    return;
+                }
                 if (BiosSyscallHandler.isSyscallTrap(cpu.pc)) {
                     // No real opcode exists at a trap address (it's not real BIOS code — see
                     // BiosSyscallHandler's Javadoc) — record it in the history ring buffer as a
@@ -378,7 +410,7 @@ public final class Main {
                     pcRing[ringPushes % ringCapacity] = cpu.pc;
                     opcodeRing[ringPushes % ringCapacity] = 0x0000;
                     ringPushes++;
-                    BiosSyscallHandler.handle(cpu);
+                    biosSyscalls.handle(cpu);
                     continue;
                 }
 
@@ -426,21 +458,28 @@ public final class Main {
                 System.out.println(" total) — execution DID eventually leave it and reach new code before hitting this.)");
             }
             if (cpu.pc == 0) {
-                // Found via a real Sonic Adventure run: the last instruction before this was RTS,
-                // returning to a PR value of exactly 0 — Sh4Cpu.pr's Java default, since nothing
-                // ever explicitly sets it before boot starts. On real hardware, the BIOS sets PR
-                // to a valid "return to supervisor code" address before jumping to a game's entry
-                // point; this project's BIOS-free HLE boot just sets PC directly and leaves PR
-                // untouched. This almost certainly means execution reached the outermost function
-                // in the boot entry's own call chain, and that function returned normally — not a
-                // missing instruction or a real emulation bug. 0x00000000 is never a legitimate
+                // Kept as a fallback: since HleBootLoader.BOOT_RETURN_SENTINEL was added (see
+                // above), a clean unwind out of the boot entry's outermost call frame should be
+                // caught by that check instead, before ever reaching here. Landing on PC=0
+                // now would mean PR held 0 for some OTHER reason (e.g. a real bug elsewhere
+                // clobbering PR, or code that reads an uninitialized/zeroed stack slot as a
+                // return address directly, bypassing the sentinel this project set at boot) —
+                // still worth flagging explicitly rather than folding into the generic message
+                // below, but no longer the expected, understood case it was before the sentinel.
+                //
+                // Found via a real Sonic Adventure run: the last instruction before this was
+                // RTS, returning to a PR value of exactly 0 — Sh4Cpu.pr's Java default, since
+                // nothing ever explicitly set it before the sentinel fix above. On real
+                // hardware, the BIOS sets PR to a valid "return to supervisor code" address
+                // before jumping to a game's entry point. 0x00000000 is never a legitimate
                 // fetch address otherwise (RAM starts at 0x0C000000; the boot file loads to
-                // 0x8C010000+), so landing here specifically is a strong, if not certain, signal.
+                // 0x8C010000+), so landing here specifically remains a strong, if not certain, signal.
                 System.out.println();
-                System.out.println("PC=0 specifically, and the instruction just before this was RTS: this is most likely");
-                System.out.println("execution returning from the boot entry's outermost call frame, not a missing");
-                System.out.println("instruction — real hardware would have PR pointing at BIOS/supervisor code to return");
-                System.out.println("into here, which this BIOS-free HLE boot never sets up. See docs/STATUS.md.");
+                System.out.println("PC=0 specifically: on real hardware this address is never legitimately");
+                System.out.println("fetched from. Now that HleBootLoader.BOOT_RETURN_SENTINEL is set on PR before");
+                System.out.println("execution starts, a clean unwind out of the boot entry should be caught above");
+                System.out.println("instead of reaching here — if you're seeing this, something else zeroed PR.");
+                System.out.println("See docs/STATUS.md.");
             } else {
                 System.out.println("This is expected at this stage: real boot code needs SH-4 instructions,");
                 System.out.println("hardware registers, or an exception/interrupt mechanism (TRAPA, MMU) this");

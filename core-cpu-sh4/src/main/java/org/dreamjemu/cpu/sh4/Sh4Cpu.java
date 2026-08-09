@@ -982,8 +982,26 @@ public class Sh4Cpu {
             // LDS.L @Rn+,PR — same shape again, for PR. The classic SH-4 function-EPILOGUE
             // instruction: "restore the return address I saved earlier" — the mirror image of
             // STS.L PR,@-Rn above, and normally followed shortly by RTS.
-            pr = bus.read32(Integer.toUnsignedLong(r[n]));
+            //
+            // Diagnostic added 2026-08-08: a real Sonic Adventure run kept stopping at PC=0
+            // right after an RTS even after HleBootLoader.BOOT_RETURN_SENTINEL was set on PR
+            // before boot started — meaning execution genuinely reached a point where THIS
+            // instruction loaded PR back to 0 from real (guest-addressed) memory, rather than
+            // PR simply never having been touched since its initial (sentinel) value. Logging
+            // exactly when that happens — which PC, and which source address supplied the 0 —
+            // is meant to reveal the actual root cause on the next real run (a stack slot never
+            // legitimately written by a matching STS.L PR,@-Rn in this call chain? a real
+            // BSR/JSR/RTS bug? something else?) instead of continuing to guess blindly. See
+            // docs/STATUS.md's BOOT_RETURN_SENTINEL entry for the full context.
+            int sourceAddress = r[n];
+            pr = bus.read32(Integer.toUnsignedLong(sourceAddress));
             r[n] += 4;
+            if (pr == 0) {
+                LOG.warn("LDS.L @Rn+,PR at PC=0x%08X loaded PR=0 from address 0x%08X - this is almost "
+                        + "certainly the eventual cause of an RTS landing on an unrecognized PC=0 rather "
+                        + "than HleBootLoader.BOOT_RETURN_SENTINEL (see docs/STATUS.md)",
+                        thisPc, sourceAddress);
+            }
         } else if ((opcode & 0xF0FF) == 0x402E) {
             // LDC Rn,VBR — sets the Vector Base Register that TRAPA (and every other
             // exception/interrupt) jumps relative to. Real boot/runtime-startup code sets this
