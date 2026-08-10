@@ -34,6 +34,7 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.extsW;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.extuB;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.extuW;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.negc;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.ocbp;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subv;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.swapB;
@@ -465,6 +466,51 @@ class Sh4CpuTest {
 
         assertEquals(0x8C020000, cpu.gbr);
         assertEquals(0x8C020000, cpu.r[2]);
+    }
+
+    @Test
+    void ocbpIsANoOpThatLeavesRegistersMemoryAndFlagsUnchanged() {
+        // OCBP @Rn purges a cache block on real hardware (writes it back if dirty, then
+        // invalidates it) — this interpreter models no data cache at all, so every write
+        // already goes straight to the Bus, meaning OCBP has no observable effect here.
+        // Confirms exactly that: the address register, an unrelated register, the memory
+        // OCBP's address points at, T, and PR are all untouched, and PC simply advances
+        // normally (no delay slot — OCBP is not a branch).
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ocbp(4)); // OCBP @R4
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[4] = 128; // the address OCBP would "purge" a cache block for
+        cpu.r[5] = 0xABCD1234; // an unrelated register, to confirm only Rn's semantics apply
+        cpu.pr = 0x8C123456; // a sentinel PR value, to confirm OCBP doesn't touch it either
+        bus.write32(128, 0x11223344); // memory at that address, to confirm it's untouched
+
+        cpu.step(); // OCBP @R4
+
+        assertEquals(128, cpu.r[4], "Rn (the address register) must be unchanged");
+        assertEquals(0xABCD1234, cpu.r[5], "an unrelated register must be unchanged");
+        assertEquals(0x11223344, bus.read32(128), "memory at the purged address must be unchanged");
+        assertFalse(cpu.tFlag(), "T must be unaffected by OCBP");
+        assertEquals(0x8C123456, cpu.pr, "PR must be unaffected by OCBP");
+        assertEquals(2, cpu.pc, "PC should simply advance by 2 — OCBP is not a branch, no delay slot");
+    }
+
+    @Test
+    void ocbpRealWorldOpcodeRegression() {
+        // Regression test using the literal real-world opcode byte (0x04A3) and register (R4)
+        // the real Sonic Adventure dump hit, after the HleBootLoader.INITIAL_STACK_POINTER fix
+        // let it execute 12,793,102 real SH-4 instructions correctly — see
+        // docs/STATUS.md/CHANGELOG.md. Pinning the literal opcode value (rather than only
+        // testing via the ocbp(n) encoder helper) protects against a future accidental change to
+        // the encoder silently drifting away from the real, confirmed encoding.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, 0x04A3);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[4] = 0x8C700000;
+
+        cpu.step();
+
+        assertEquals(2, cpu.pc);
+        assertEquals(0x8C700000, cpu.r[4]);
     }
 
     @Test

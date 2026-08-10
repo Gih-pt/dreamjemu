@@ -1035,6 +1035,27 @@ public class Sh4Cpu {
             // STC GBR,Rn — reads GBR back into a general-purpose register. Mirror image of
             // LDC Rn,GBR above, added alongside it for the same symmetry reason as VBR's pair.
             r[n] = gbr;
+        } else if ((opcode & 0xF0FF) == 0x00A3) {
+            // OCBP @Rn — "Purge Cache Block": on real hardware, reads the cache block
+            // containing the address in Rn; if it's dirty, writes it back to external memory,
+            // then invalidates it (if the block isn't cached, or isn't dirty, it's simply
+            // invalidated). This interpreter does not model a data cache at all — every write
+            // already goes straight to the Bus, so memory is always as up to date as any
+            // "cache write-back" could make it — meaning OCBP has no observable effect here: no
+            // register, memory, or flag change, exactly the same "hardware does X, but a
+            // single-cache-less interpreter is already equivalent to the result" reasoning
+            // already used above for TAS.B's locked-bus-cycle simplification.
+            //
+            // Opcode encoding (0000nnnn10100011) confirmed against two independent authoritative
+            // sources that agree exactly: the sh4-dis.c disassembler tables used by multiple
+            // independent QEMU forks (e.g. ntddk/temu, aquynh/iVM), and nullDC's own SH-4 opcode
+            // table (workhorsylegacy/nulldc-linux, sh4_opcode_list.cpp) — the same kind of
+            // cross-check discipline used for every other opcode in this session.
+            //
+            // Found necessary by the real Sonic Adventure dump (opcode 0x04A3, R4) after the
+            // HleBootLoader.INITIAL_STACK_POINTER fix let it execute 12,793,102 real SH-4
+            // instructions correctly — see docs/STATUS.md/CHANGELOG.md.
+            // No-op: intentionally falls through to `return nextPc` at the bottom.
         } else if ((opcode & 0xFF00) == 0xC300) {
             // TRAPA #imm — software exception. Unlike every branch above, TRAPA has NO delay
             // slot (it takes effect immediately) and directly changes PC itself, so — uniquely

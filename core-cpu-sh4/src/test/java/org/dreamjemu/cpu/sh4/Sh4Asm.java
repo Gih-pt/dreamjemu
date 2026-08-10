@@ -462,4 +462,8 @@ final class Sh4Asm {
     static int stcGbr(int n) {
         return 0x0012 | (n << 8); // STC GBR,Rn
     }
+
+    static int ocbp(int n) {
+        return 0x00A3 | (n << 8); // OCBP @Rn
+    }
 }
