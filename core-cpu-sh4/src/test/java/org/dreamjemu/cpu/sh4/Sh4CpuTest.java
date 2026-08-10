@@ -35,6 +35,8 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.extuB;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.extuW;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.negc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.ocbp;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovStoreDec;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovLoad;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subv;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.swapB;
@@ -511,6 +513,127 @@ class Sh4CpuTest {
 
         assertEquals(2, cpu.pc);
         assertEquals(0x8C700000, cpu.r[4]);
+    }
+
+    @Test
+    void fpscrDefaultsToTheRealHardwareResetValueNotJavasIntDefault() {
+        // Confirms the exact bug class already fixed for PR/R15 (see
+        // HleBootLoader.INITIAL_STACK_POINTER's Javadoc) wasn't quietly reintroduced for FPSCR.
+        Sh4Cpu cpu = new Sh4Cpu(new SimpleTestBus(MEM_SIZE), 0);
+
+        assertEquals(0x00040001, cpu.fpscr);
+    }
+
+    @Test
+    void fmovSinglePrecisionStoreDecIsAPredecrementStoreOfAnFrRegister() {
+        // FMOV FRm,@-Rn (FPSCR.SZ=0, the default/reset state — see fpscr's Javadoc): same
+        // "predecrement Rn, then store the new address" shape as STS.L PR,@-Rn above, just
+        // moving a floating-point register's raw bits instead of a system register.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, fmovStoreDec(15, 3)); // FMOV FR3,@-R15
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 128;
+        cpu.fr[3] = 0x3F800000; // 1.0f's raw bit pattern — moved as raw bits, not reinterpreted
+        cpu.r[2] = 0xABCD1234; // an unrelated register, to confirm only Rn/FRm are touched
+
+        cpu.step();
+
+        assertEquals(124, cpu.r[15], "R15 must be predecremented by 4 (single precision)");
+        assertEquals(0x3F800000, bus.read32(124), "the FR register's raw bits must land at the new R15");
+        assertEquals(0x3F800000, cpu.fr[3], "FRm itself must be unchanged (this is a store, not a pop)");
+        assertEquals(0xABCD1234, cpu.r[2], "an unrelated register must be unchanged");
+        assertEquals(2, cpu.pc);
+    }
+
+    @Test
+    void fmovRealWorldOpcodeRegression() {
+        // Regression test using the literal real-world opcode byte (0xFFFB) — FRm=FR15, Rn=R15,
+        // i.e. FMOV FR15,@-R15 — the real Sonic Adventure dump hit right after OCBP, after the
+        // HleBootLoader.INITIAL_STACK_POINTER fix let it advance far enough to leave the boot
+        // entry's initial loops and reach real floating-point prologue code — see
+        // docs/STATUS.md/CHANGELOG.md. Uses a small, in-bounds R15 value (not the dump's real
+        // 0x8Cxxxxxx address) purely so this fits SimpleTestBus's small flat array — what's
+        // being pinned here is the opcode/register decoding (FRm=FR15, Rn=R15), not that
+        // specific runtime address.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, 0xFFFB);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 128;
+        cpu.fr[15] = 0x40490FDB; // pi's raw single-precision bit pattern, arbitrary but recognizable
+
+        cpu.step();
+
+        assertEquals(2, cpu.pc);
+        assertEquals(124, cpu.r[15]);
+        assertEquals(0x40490FDB, bus.read32(124));
+    }
+
+    @Test
+    void fmovDoublePrecisionStoreDecIsLoudlyUnimplemented() {
+        // FPSCR.SZ=1 (double-precision FMOV DRm/XDm,@-Rn) isn't confirmed needed by any real
+        // disc run yet, and is genuinely more involved to get right (DR-vs-XD register-bank
+        // selection) — confirms this gap is loud (a clear UnsupportedOperationException),
+        // not silently guessed at, exactly this project's standing "gaps are loud" guarantee.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, fmovStoreDec(15, 3));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[15] = 128;
+        cpu.fpscr |= 0x00100000; // set SZ (bit 20)
+
+        assertThrows(UnsupportedOperationException.class, cpu::step);
+    }
+
+    @Test
+    void fmovSinglePrecisionLoadIsAPlainRegisterIndirectLoadOfAnFrRegister() {
+        // FMOV.S @Rm,FRn (FPSCR.SZ=0 — the default/reset state, see fpscr's Javadoc): the "read"
+        // sibling of the FMOV Rm,@-Rn pre-decrement store above. No pre/post address
+        // modification — Rm is only read, never changed.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, fmovLoad(13, 0)); // FMOV.S @R0,FR13
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 64;
+        bus.write32(64, 0x40490FDB); // pi's raw single-precision bit pattern
+        cpu.r[2] = 0xABCD1234; // an unrelated register, to confirm only Rm/FRn are touched
+
+        cpu.step();
+
+        assertEquals(0x40490FDB, cpu.fr[13], "FRn must hold the raw bits read from @Rm");
+        assertEquals(64, cpu.r[0], "Rm (the address register) must be unchanged — no pre/post modify");
+        assertEquals(0x40490FDB, bus.read32(64), "memory at the read address must be unchanged (a load, not a pop)");
+        assertEquals(0xABCD1234, cpu.r[2], "an unrelated register must be unchanged");
+        assertEquals(2, cpu.pc);
+    }
+
+    @Test
+    void fmovLoadRealWorldOpcodeRegression() {
+        // Regression test using the literal real-world opcode byte (0xFD08) — FRn=FR13, Rm=R0,
+        // i.e. FMOV.S @R0,FR13 — the real Sonic Adventure dump hit right after the three FMOV
+        // Rm,@-R15 stores (0xFFFB/0xFFEB/0xFFDB), after it executed 12,796,845 real SH-4
+        // instructions correctly — see docs/STATUS.md/CHANGELOG.md.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, 0xFD08);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 64;
+        bus.write32(64, 0x3F800000); // 1.0f's raw bit pattern, arbitrary but recognizable
+
+        cpu.step();
+
+        assertEquals(2, cpu.pc);
+        assertEquals(0x3F800000, cpu.fr[13]);
+        assertEquals(64, cpu.r[0]);
+    }
+
+    @Test
+    void fmovDoublePrecisionLoadIsLoudlyUnimplemented() {
+        // FPSCR.SZ=1 isn't confirmed needed by any real disc run yet for the load form either —
+        // same "gaps are loud" guarantee as the store form's equivalent test above.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, fmovLoad(13, 0));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 64;
+        cpu.fpscr |= 0x00100000; // set SZ (bit 20)
+
+        assertThrows(UnsupportedOperationException.class, cpu::step);
     }
 
     @Test

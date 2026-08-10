@@ -466,4 +466,12 @@ final class Sh4Asm {
     static int ocbp(int n) {
         return 0x00A3 | (n << 8); // OCBP @Rn
     }
+
+    static int fmovStoreDec(int n, int m) {
+        return 0xF00B | (n << 8) | (m << 4); // FMOV <FRm/DRm/XDm>,@-Rn
+    }
+
+    static int fmovLoad(int n, int m) {
+        return 0xF008 | (n << 8) | (m << 4); // FMOV.S @Rm,FRn
+    }
 }

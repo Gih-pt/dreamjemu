@@ -127,6 +127,44 @@ public class Sh4Cpu {
     /** Low 32 bits of the multiply result — the only part MUL.L/MULS.W/MULU.W write. */
     public int macl;
 
+    /**
+     * Single-precision floating-point registers FR0-FR15 (bank 0 only so far — see
+     * {@link #fpscr}'s Javadoc: bank-switching via {@code FRCHG}/{@code FPSCR.FR}, and the
+     * "extended" back-bank register file (XF0-XF15) it switches to, aren't modeled yet since
+     * nothing has needed them). Stored as raw 32-bit patterns (not {@code float}), since so far
+     * every FPU instruction this project has needed ({@code FMOV}-family register spill/reload)
+     * only moves bits — it doesn't interpret them as IEEE 754 values. A real
+     * arithmetic instruction (FADD/FMUL/etc.) will need {@link Float#intBitsToFloat}/
+     * {@link Float#floatToRawIntBits} conversions at the point it's added, not here.
+     */
+    public final int[] fr = new int[16];
+
+    /**
+     * Floating-Point Status/Control Register. Controls (among other things not modeled yet —
+     * denormalization mode, rounding mode, exception enables) {@code FPSCR.SZ} (bit 20, transfer
+     * size: 0 = single-precision {@code FMOV}s move one 32-bit {@code FR} register, 1 =
+     * double-precision {@code FMOV}s move a 64-bit {@code DR}/{@code XD} register pair) and
+     * {@code FPSCR.FR} (bit 21, which physical bank FR0-FR15 currently addresses — not modeled
+     * yet, same reason as {@link #fr}'s Javadoc).
+     *
+     * <p><b>Deliberately NOT left at Java's {@code int} default of {@code 0}</b> — real hardware
+     * resets this to {@code 0x00040001} (confirmed against two independent authoritative
+     * sources: the ST/Hitachi "SH-4 32-bit CPU Core Architecture" manual's reset-value table,
+     * and multiple Renesas SH7670-series application notes' {@code #define FPSCR_Init
+     * 0x00040001}), not {@code 0}. This project has specifically been bitten before by exactly
+     * this class of bug ({@link #pr}/{@code r[15]} both silently defaulting to {@code 0} instead
+     * of their real reset values — see {@code HleBootLoader.BOOT_RETURN_SENTINEL}/
+     * {@code INITIAL_STACK_POINTER}'s Javadoc and docs/STATUS.md for the full story) — this
+     * field is initialized correctly from the start specifically to not repeat it. Decoded:
+     * {@code SZ=0}, {@code FR=0}, {@code PR=0} (single-precision, bank 0 — matches every
+     * {@code FMOV} this project has needed so far), {@code DN=1}, {@code RM=01}. Nothing sets
+     * this to anything else yet ({@code LDS Rn,FPSCR}/{@code STS FPSCR,Rn} aren't implemented) —
+     * if real code ever changes it before this project implements those, execution will stop on
+     * the unimplemented {@code LDS}/{@code STS} opcode rather than silently keeping a stale
+     * value, the same "gaps are loud" guarantee as everywhere else in this interpreter.
+     */
+    public int fpscr = 0x00040001;
+
     /** Status register. Only bit 0 (the T flag) is modeled so far. */
     private int sr;
 
@@ -354,6 +392,9 @@ public class Sh4Cpu {
             return result;
         }
         if ((result = tryExecuteSystemControl(thisPc, opcode, n, m, imm8, nextPc)) != null) {
+            return result;
+        }
+        if ((result = tryExecuteFpu(thisPc, opcode, n, m, imm8, nextPc)) != null) {
             return result;
         }
 
@@ -1079,6 +1120,86 @@ public class Sh4Cpu {
             ssr = sr;
             spc = nextPc;
             return vbr + 0x100;
+        } else {
+            return null;
+        }
+        return nextPc;
+    }
+
+    /**
+     * Tries each FPU-family instruction — a brand-new family (this project's first FPU
+     * instruction), not part of the {@code refactor/core-cpu-sh4} mechanical split like the
+     * other {@code tryExecute*} methods, since none existed to split at that time.
+     * Returns the next PC if {@code opcode} matched, or {@code null} if none matched.
+     */
+    private Integer tryExecuteFpu(int thisPc, int opcode, int n, int m, int imm8, int nextPc) {
+        if ((opcode & 0xF00F) == 0xF00B) {
+            // FMOV <FRm/DRm/XDm>,@-Rn — pre-decrement store of a floating-point register (or
+            // register pair) to memory, exactly the same "predecrement Rn, then store at the
+            // new address" shape as STS.L PR,@-Rn and friends above, just from the FPU register
+            // file instead of a system register. Confirmed against two independent authoritative
+            // sources that agree exactly: the sh4-dis.c disassembler tables used by multiple
+            // independent QEMU forks, and Microsoft's own documented "SH-4 Prolog" reference
+            // (which shows real compiler-generated code using precisely this instruction, with
+            // R15 as the address register, to spill floating-point argument registers in a
+            // function's prologue — exactly the real-world situation this opcode was found in).
+            //
+            // Real hardware's actual register-file interpretation of the m field depends on
+            // FPSCR.SZ at the time this executes (not on the opcode's raw bits alone — the
+            // sh4-dis.c table above shows two *possible* disassemblies of the same bit pattern
+            // for exactly this reason, since a static disassembler can't know FPSCR.SZ): when
+            // SZ=0, m directly addresses one of the 16 single-precision FR registers (4-byte
+            // store); when SZ=1, m's low bit distinguishes a DR (bank-0 double, low bit 0) from
+            // an XD (always-back-bank double, low bit 1) register pair (8-byte store), with the
+            // top 3 bits of m giving the pair index.
+            boolean doublePrecision = (fpscr & 0x00100000) != 0; // FPSCR bit 20 (SZ)
+            if (!doublePrecision) {
+                // The only case actually confirmed needed so far (the real Sonic Adventure dump
+                // hit this with FPSCR at its untouched reset value, SZ=0 — see fpscr's own
+                // Javadoc for why that's the correct assumption here, not a guess): a plain
+                // single-precision FR register spill.
+                r[n] -= 4;
+                bus.write32(Integer.toUnsignedLong(r[n]), fr[m]);
+            } else {
+                // Not yet confirmed needed by a real disc run, and genuinely more involved to
+                // get right (DR-vs-XD register-bank selection, per fpscr's own Javadoc) — rather
+                // than guess at untested double-precision semantics, this gap is left loud
+                // instead of silently (and possibly wrongly) implemented. Falls through to the
+                // same UnsupportedOperationException every other unimplemented opcode gets, with
+                // a clearer message pointing at exactly why.
+                throw new UnsupportedOperationException(String.format(
+                        "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X (double-precision FMOV "
+                                + "Rm,@-Rn — FPSCR.SZ=1 case not implemented yet, only the "
+                                + "single-precision case found necessary by a real disc run so "
+                                + "far; see Sh4Cpu.tryExecuteFpu's Javadoc)",
+                        opcode, thisPc));
+            }
+        } else if ((opcode & 0xF00F) == 0xF008) {
+            // FMOV.S @Rm,FRn — plain register-indirect load, the "read" sibling of the
+            // FMOV Rm,@-Rn pre-decrement store directly above (same family, same real-disc
+            // prologue context: the Sonic Adventure dump hit this only a handful of
+            // instructions after the three FMOV @-R15 stores that let it reach this code at
+            // all). No pre/post address modification here — Rm is just read, not changed.
+            // Confirmed against multiple independent authoritative sh4-dis.c disassembler
+            // tables that agree exactly (including one, Dushistov/qemu_at91sam9263, that
+            // already spells it "fmov.s" explicitly rather than the ambiguous general "fmov"
+            // some other forks use for this same encoding).
+            //
+            // Same FPSCR.SZ-dependent register-file interpretation as the store form above (see
+            // its comment for the full reasoning) — SZ=0 is the only case confirmed needed so
+            // far, for the same reason (FPSCR is still untouched from its documented reset
+            // value; no LDS Rn,FPSCR exists in this project yet to have changed it).
+            boolean doublePrecision = (fpscr & 0x00100000) != 0; // FPSCR bit 20 (SZ)
+            if (!doublePrecision) {
+                fr[n] = bus.read32(Integer.toUnsignedLong(r[m]));
+            } else {
+                throw new UnsupportedOperationException(String.format(
+                        "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X (double-precision "
+                                + "FMOV @Rm,Rn — FPSCR.SZ=1 case not implemented yet, only the "
+                                + "single-precision case found necessary by a real disc run so "
+                                + "far; see Sh4Cpu.tryExecuteFpu's Javadoc)",
+                        opcode, thisPc));
+            }
         } else {
             return null;
         }
