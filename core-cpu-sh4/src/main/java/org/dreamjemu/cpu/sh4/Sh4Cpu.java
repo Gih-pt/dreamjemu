@@ -1200,6 +1200,29 @@ public class Sh4Cpu {
                                 + "far; see Sh4Cpu.tryExecuteFpu's Javadoc)",
                         opcode, thisPc));
             }
+        } else if ((opcode & 0xF00F) == 0xF007) {
+            // FMOV.S FRm,@(R0,Rn) — indexed store: writes FRm to the address R0+Rn (no pre/post
+            // modification of either register). Same family as the two FMOV.S forms directly
+            // above, found only 5 real instructions later in the same real Sonic Adventure run
+            // — likely the same function indexing into an array/struct of floats using R0 as a
+            // running offset. Confirmed against six independent authoritative sh4-dis.c
+            // disassembler tables that agree exactly, several of which (including
+            // Dushistov/qemu_at91sam9263, ntddk/temu) already spell it "fmov.s" explicitly.
+            //
+            // Same FPSCR.SZ-dependent register-file interpretation as the other two FMOV.S forms
+            // above (see the @Rm,FRn form's comment for the full reasoning) — SZ=0 is the only
+            // case confirmed needed so far, for the same reason.
+            boolean doublePrecision = (fpscr & 0x00100000) != 0; // FPSCR bit 20 (SZ)
+            if (!doublePrecision) {
+                bus.write32(Integer.toUnsignedLong(r[0] + r[n]), fr[m]);
+            } else {
+                throw new UnsupportedOperationException(String.format(
+                        "Unimplemented SH-4 opcode 0x%04X at PC=0x%08X (double-precision "
+                                + "FMOV Rm,@(R0,Rn) — FPSCR.SZ=1 case not implemented yet, only "
+                                + "the single-precision case found necessary by a real disc run "
+                                + "so far; see Sh4Cpu.tryExecuteFpu's Javadoc)",
+                        opcode, thisPc));
+            }
         } else {
             return null;
         }

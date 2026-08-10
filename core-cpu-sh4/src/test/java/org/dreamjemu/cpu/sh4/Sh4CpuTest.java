@@ -37,6 +37,7 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.negc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.ocbp;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovStoreDec;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovLoad;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovStoreIndexed;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subv;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.swapB;
@@ -631,6 +632,63 @@ class Sh4CpuTest {
         bus.writeInstruction(0, fmovLoad(13, 0));
         Sh4Cpu cpu = new Sh4Cpu(bus, 0);
         cpu.r[0] = 64;
+        cpu.fpscr |= 0x00100000; // set SZ (bit 20)
+
+        assertThrows(UnsupportedOperationException.class, cpu::step);
+    }
+
+    @Test
+    void fmovIndexedStoreWritesFrRegisterAtR0PlusRn() {
+        // FMOV.S FRm,@(R0,Rn) (FPSCR.SZ=0 — the default/reset state, see fpscr's Javadoc):
+        // indexed store, writing FRm to R0+Rn. Neither R0 nor Rn is modified.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, fmovStoreIndexed(14, 3)); // FMOV.S FR3,@(R0,R14)
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 40;
+        cpu.r[14] = 24; // R0+R14 = 64
+        cpu.fr[3] = 0x40490FDB; // pi's raw single-precision bit pattern
+        cpu.r[2] = 0xABCD1234; // an unrelated register, to confirm only R0/Rn/FRm are touched
+
+        cpu.step();
+
+        assertEquals(0x40490FDB, bus.read32(64), "FRm's raw bits must land at R0+Rn");
+        assertEquals(40, cpu.r[0], "R0 must be unchanged — indexed addressing doesn't modify it");
+        assertEquals(24, cpu.r[14], "Rn must be unchanged — indexed addressing doesn't modify it");
+        assertEquals(0x40490FDB, cpu.fr[3], "FRm itself must be unchanged (this is a store, not a pop)");
+        assertEquals(0xABCD1234, cpu.r[2], "an unrelated register must be unchanged");
+        assertEquals(2, cpu.pc);
+    }
+
+    @Test
+    void fmovIndexedStoreRealWorldOpcodeRegression() {
+        // Regression test using the literal real-world opcode byte (0xFE37) — FRm=FR3, Rn=R14,
+        // i.e. FMOV.S FR3,@(R0,R14) — the real Sonic Adventure dump hit right after the
+        // FMOV.S @R0,FR13 load (0xFD08), after it executed 12,796,850 real SH-4 instructions
+        // correctly — see docs/STATUS.md/CHANGELOG.md.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, 0xFE37);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 40;
+        cpu.r[14] = 24;
+        cpu.fr[3] = 0x3F800000; // 1.0f's raw bit pattern, arbitrary but recognizable
+
+        cpu.step();
+
+        assertEquals(2, cpu.pc);
+        assertEquals(0x3F800000, bus.read32(64));
+        assertEquals(40, cpu.r[0]);
+        assertEquals(24, cpu.r[14]);
+    }
+
+    @Test
+    void fmovDoublePrecisionIndexedStoreIsLoudlyUnimplemented() {
+        // FPSCR.SZ=1 isn't confirmed needed by any real disc run yet for the indexed store form
+        // either — same "gaps are loud" guarantee as the other two FMOV.S forms' equivalent tests.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, fmovStoreIndexed(14, 3));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 40;
+        cpu.r[14] = 24;
         cpu.fpscr |= 0x00100000; // set SZ (bit 20)
 
         assertThrows(UnsupportedOperationException.class, cpu::step);
