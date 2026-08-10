@@ -427,7 +427,7 @@ public final class Main {
                             System.out.println("Left the previously reported loop after " + (steps - lastReportedAtStep)
                                     + " steps — this is a DIFFERENT loop:");
                         }
-                        printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps);
+                        printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps, cpu);
                         lastReportedLoopIdentity = identity;
                         distinctLoopsReported++;
                     }
@@ -514,9 +514,23 @@ public final class Main {
      * period, reconstructed from the ring buffer {@code attemptMinimalBoot} kept alongside
      * stepping — {@link LoopDetector} itself tracks only PC-to-step-index mappings, not the
      * PC sequence in order, so it can't reconstruct the loop body on its own.
+     *
+     * <p>Also dumps every general-purpose register's value at the moment of detection. Added
+     * specifically because a real Sonic Adventure run reached a stable 3-instruction loop
+     * ({@code MOV.L @R4,R3} / {@code TST R5,R3} / {@code BT -4}) whose shape — read a
+     * memory-mapped value, test a bit, branch back while it's clear — is the classic
+     * "poll a hardware status register until a bit sets" pattern (VBlank, DMA completion, a
+     * timer), rather than legitimate bounded work (a {@code memset}/{@code .bss}-clear loop):
+     * those terminate because a *counter register* changes every iteration; this class of loop
+     * only terminates when *external, unmodeled hardware* changes a bit this interpreter has no
+     * way to ever set. Distinguishing the two from the loop body's opcodes alone is a guess; the
+     * one piece of information that actually answers it is what address is being polled — which
+     * requires seeing the actual register values, not just which registers are named. Kept as a
+     * general diagnostic (not special-cased to this one loop's exact opcodes) since any future
+     * loop this shape could be the same category of gap.
      */
     private static void printLoopDetected(LoopDetector loopDetector, int[] pcRing, int[] opcodeRing,
-                                           int ringPushes, int ringCapacity, int steps) {
+                                           int ringPushes, int ringCapacity, int steps, Sh4Cpu cpu) {
         long period = loopDetector.period();
         System.out.println("Detected a stable repeating loop after " + steps + " total steps:");
         System.out.println("  Period: " + period + " instruction(s), confirmed over "
@@ -535,6 +549,13 @@ public final class Main {
                 }
                 System.out.println(String.format("    PC=0x%08X opcode=0x%04X", pcRing[index], opcodeRing[index]));
             }
+        }
+
+        System.out.println("  Register snapshot at detection (for identifying a hardware-register-poll");
+        System.out.println("  address, if this turns out to be a spin-wait rather than bounded work):");
+        for (int i = 0; i < 16; i += 4) {
+            System.out.println(String.format("    R%-2d=0x%08X  R%-2d=0x%08X  R%-2d=0x%08X  R%-2d=0x%08X",
+                    i, cpu.r[i], i + 1, cpu.r[i + 1], i + 2, cpu.r[i + 2], i + 3, cpu.r[i + 3]));
         }
 
         System.out.println("This may be legitimate but slow work (e.g. a byte-at-a-time memset/.bss-clear");
