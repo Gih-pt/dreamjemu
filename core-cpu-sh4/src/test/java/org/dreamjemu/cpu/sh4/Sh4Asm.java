@@ -478,4 +478,8 @@ final class Sh4Asm {
     static int fmovStoreIndexed(int n, int m) {
         return 0xF007 | (n << 8) | (m << 4); // FMOV.S FRm,@(R0,Rn)
     }
+
+    static int movt(int n) {
+        return 0x0029 | (n << 8); // MOVT Rn
+    }
 }

@@ -574,6 +574,19 @@ public class Sh4Cpu {
             // PC-masking rule as MOV.L @(disp,PC),Rn.
             int disp8 = opcode & 0xFF;
             r[0] = (thisPc & ~3) + 4 + disp8 * 4;
+        } else if ((opcode & 0xF0FF) == 0x0029) {
+            // MOVT Rn — "T -> Rn": stores the T flag itself into a general-purpose register
+            // (1 if T=1, 0 if T=0). Confirmed against two independent authoritative sources that
+            // agree exactly: the sh4-dis.c disassembler tables used by multiple independent QEMU
+            // forks, and the Renesas SH Instruction Set Summary (shared-ptr.com/sh_insns.html —
+            // one of this project's established primary references), whose own pseudocode is
+            // exactly "if (T == 1) R[n] = 1; else R[n] = 0;". Found necessary by the real Sonic
+            // Adventure dump (opcode 0x0229, R2) after it executed 12,798,499 real SH-4
+            // instructions correctly — see docs/STATUS.md/CHANGELOG.md. Classified as a Data
+            // Transfer instruction in Renesas's own manual, hence living in this family method
+            // rather than tryExecuteSystemControl (unlike STC SR,Rn above, which reads a whole
+            // control register rather than the single T flag).
+            r[n] = tFlag() ? 1 : 0;
         } else {
             return null;
         }

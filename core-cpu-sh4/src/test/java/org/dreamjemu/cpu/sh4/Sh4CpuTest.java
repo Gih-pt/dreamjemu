@@ -38,6 +38,7 @@ import static org.dreamjemu.cpu.sh4.Sh4Asm.ocbp;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovStoreDec;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovLoad;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.fmovStoreIndexed;
+import static org.dreamjemu.cpu.sh4.Sh4Asm.movt;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subc;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.subv;
 import static org.dreamjemu.cpu.sh4.Sh4Asm.swapB;
@@ -692,6 +693,55 @@ class Sh4CpuTest {
         cpu.fpscr |= 0x00100000; // set SZ (bit 20)
 
         assertThrows(UnsupportedOperationException.class, cpu::step);
+    }
+
+    @Test
+    void movtStoresTFlagIntoRegister() {
+        // MOVT Rn — "T -> Rn": Rn = 1 if T=1, else 0. Confirmed against the Renesas SH
+        // Instruction Set Summary's own pseudocode: "if (T == 1) R[n] = 1; else R[n] = 0;".
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, movt(2)); // MOVT R2
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[3] = 0xABCD1234; // an unrelated register, to confirm only Rn is touched
+
+        cpu.step(); // MOVT R2 with T's default (false) value
+
+        assertEquals(0, cpu.r[2], "T defaults false, so MOVT must store 0");
+        assertEquals(0xABCD1234, cpu.r[3], "an unrelated register must be unchanged");
+        assertEquals(2, cpu.pc);
+    }
+
+    @Test
+    void movtAfterCmpEqReflectsTSetByAnInstruction() {
+        // Confirms MOVT reflects T as actually set by another real instruction (CMP/EQ), not
+        // just T's default value — the more realistic real-world usage (test a condition, then
+        // materialize it into a register for further use, e.g. as a boolean return value).
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        int pc = write(bus, 0, cmpEqReg(0, 1)); // CMP/EQ R1,R0
+        write(bus, pc, movt(2)); // MOVT R2
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.r[0] = 7;
+        cpu.r[1] = 7;
+
+        cpu.step(); // CMP/EQ R1,R0 — sets T since R0 == R1
+        cpu.step(); // MOVT R2
+
+        assertEquals(1, cpu.r[2], "T was set by CMP/EQ, so MOVT must store 1");
+    }
+
+    @Test
+    void movtRealWorldOpcodeRegression() {
+        // Regression test using the literal real-world opcode byte (0x0229) — Rn=R2 — the real
+        // Sonic Adventure dump hit right after the SPG_STATUS-polling loop, after it executed
+        // 12,798,499 real SH-4 instructions correctly — see docs/STATUS.md/CHANGELOG.md.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, 0x0229);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+
+        cpu.step();
+
+        assertEquals(2, cpu.pc);
+        assertEquals(0, cpu.r[2], "T defaults false in this isolated test, so MOVT must store 0");
     }
 
     @Test
