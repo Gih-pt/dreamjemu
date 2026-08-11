@@ -84,6 +84,27 @@ public final class SystemBus implements Bus {
         return address & DreamcastAddressMap.PHYSICAL_ADDRESS_MASK;
     }
 
+    /**
+     * Wires an externally-owned {@link MemoryRegion} into this bus at a physical address range.
+     *
+     * <p>Added specifically so peripheral modules that {@code core-system} correctly shouldn't
+     * depend on (this project's module dependency direction is strictly "peripherals depend on
+     * core-system's interfaces", never the reverse — see core-cpu-sh4's build.gradle.kts for the
+     * same reasoning applied to the CPU) can still plug their own {@link MemoryRegion}
+     * implementation into the real address space, from whichever layer already depends on both
+     * (so far, only {@code app-cli}'s {@code Main} does this, for {@code core-gpu-pvr2}'s
+     * {@code PvrRegisters}).
+     *
+     * <p>{@code start} is a physical address (the same space {@link DreamcastAddressMap}'s
+     * constants describe); ranges added this way take priority in lookup order over the ranges
+     * this constructor sets up internally only in the sense that they're checked in the order
+     * added — callers are responsible for not overlapping an existing range, since nothing here
+     * detects or rejects that.
+     */
+    public void mapRegion(long start, long size, MemoryRegion region) {
+        ranges.add(new MappedRange(start, start + size, region, start));
+    }
+
     private MappedRange findRange(long physicalAddress) {
         for (MappedRange range : ranges) {
             if (range.contains(physicalAddress)) {

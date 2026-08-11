@@ -17,6 +17,8 @@ import org.dreamjemu.gdrom.LogicalSectorReader;
 import org.dreamjemu.gdrom.SectorSource;
 import org.dreamjemu.cpu.sh4.Sh4Cpu;
 import org.dreamjemu.system.HleBootLoader;
+import org.dreamjemu.gpu.pvr2.PvrRegisters;
+import org.dreamjemu.system.DreamcastAddressMap;
 import org.dreamjemu.system.SystemBus;
 import org.dreamjemu.common.log.LogConfig;
 import org.dreamjemu.common.log.LogLevel;
@@ -318,6 +320,14 @@ public final class Main {
         int entryPc = HleBootLoader.loadBootFile(bus, bootFileBytes);
         System.out.println("Loaded " + bootFileBytes.length + " bytes to 0x" + Integer.toHexString(entryPc)
                 + " (real hardware's documented \"" + ipBin.bootFilename() + "\" load address).");
+
+        // Added 2026-08-10 after a real Sonic Adventure run reached a stable, budget-exhausting
+        // spin-wait on PVR2's SPG_STATUS register (see PvrRegisters' own Javadoc for the full
+        // real-world context and why only SPG_STATUS is modeled, and only approximately).
+        // Without this, that address falls into the generic UnmappedRegion catch-all below,
+        // which always reads 0 — exactly the loop's failure mode.
+        bus.mapRegion(DreamcastAddressMap.PVR2_REGISTERS_BASE, DreamcastAddressMap.PVR2_REGISTERS_SIZE,
+                new PvrRegisters());
 
         // Added 2026-08-04: a real BIOS installs this vector table before jumping to a game;
         // this BIOS-free HLE boot never did, so any code trying to use a BIOS syscall would read

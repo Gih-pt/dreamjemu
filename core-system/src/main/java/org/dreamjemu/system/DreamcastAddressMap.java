@@ -44,6 +44,16 @@ public final class DreamcastAddressMap {
     public static final long VRAM_BASE = 0x0400_0000L;
     public static final long VRAM_SIZE = 0x0080_0000L; // 8 MB
 
+    // --- PVR2 (Holly) register block (owned by core-gpu-pvr2's PvrRegisters) ---
+    // Confirmed against two independent authoritative sources that agree exactly (KallistiOS's
+    // and Flycast's own pvr_regs.h): base 0x005F8000, size 0x8000. Sits in the gap between
+    // FLASH_ROM (ends 0x0022_0000) and AICA_RAM_BASE (0x0080_0000), so it needs no separate
+    // "unmapped gap" adjustment. Only SPG_STATUS (offset 0x10C) is actually modeled yet — see
+    // PvrRegisters' Javadoc for why, and for the real Sonic Adventure spin-wait that made this
+    // necessary.
+    public static final long PVR2_REGISTERS_BASE = 0x005F_8000L;
+    public static final long PVR2_REGISTERS_SIZE = 0x0000_8000L; // 32 KB
+
     // --- Main system RAM ---
     // Physical range 0x0C000000-0x0FFFFFFF is four contiguous 16MB mirrors of
     // the same 16MB of RAM; SystemBus maps all four onto the same RamRegion.
