@@ -17,6 +17,7 @@ import org.dreamjemu.gdrom.LogicalSectorReader;
 import org.dreamjemu.gdrom.SectorSource;
 import org.dreamjemu.cpu.sh4.Sh4Cpu;
 import org.dreamjemu.system.HleBootLoader;
+import org.dreamjemu.gpu.pvr2.HollySystemRegisters;
 import org.dreamjemu.gpu.pvr2.PvrRegisters;
 import org.dreamjemu.system.DreamcastAddressMap;
 import org.dreamjemu.system.SystemBus;
@@ -328,6 +329,12 @@ public final class Main {
         // which always reads 0 — exactly the loop's failure mode.
         bus.mapRegion(DreamcastAddressMap.PVR2_REGISTERS_BASE, DreamcastAddressMap.PVR2_REGISTERS_SIZE,
                 new PvrRegisters());
+
+        // Added 2026-08-11 after a real Sonic Adventure run reached a second, immediately
+        // following spin-wait, this time on Holly's SB_ISTNRM (VBLANK_BEGIN) — see
+        // HollySystemRegisters' own Javadoc for the full real-world context.
+        bus.mapRegion(DreamcastAddressMap.HOLLY_SYSTEM_REGISTERS_BASE,
+                DreamcastAddressMap.HOLLY_SYSTEM_REGISTERS_SIZE, new HollySystemRegisters());
 
         // Added 2026-08-04: a real BIOS installs this vector table before jumping to a game;
         // this BIOS-free HLE boot never did, so any code trying to use a BIOS syscall would read

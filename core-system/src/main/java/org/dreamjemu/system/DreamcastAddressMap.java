@@ -54,6 +54,16 @@ public final class DreamcastAddressMap {
     public static final long PVR2_REGISTERS_BASE = 0x005F_8000L;
     public static final long PVR2_REGISTERS_SIZE = 0x0000_8000L; // 32 KB
 
+    // --- Holly "System Control Reg." block (owned by core-gpu-pvr2's HollySystemRegisters) ---
+    // Confirmed against the official Sega Dev.Box System Architecture manual's own physical
+    // memory map (Table 2-1): base 0x005F6800, size 0x200. A genuinely separate named region
+    // from PVR2_REGISTERS above (the manual lists "System Control Reg." and "TA/PVR Core Reg."
+    // as distinct blocks), sitting in the same FLASH_ROM/AICA_RAM_BASE gap. Only SB_ISTNRM's
+    // VBLANK_BEGIN bit is actually modeled yet — see HollySystemRegisters' Javadoc for why, and
+    // for the real Sonic Adventure spin-wait that made this necessary.
+    public static final long HOLLY_SYSTEM_REGISTERS_BASE = 0x005F_6800L;
+    public static final long HOLLY_SYSTEM_REGISTERS_SIZE = 0x0000_0200L; // 512 bytes
+
     // --- Main system RAM ---
     // Physical range 0x0C000000-0x0FFFFFFF is four contiguous 16MB mirrors of
     // the same 16MB of RAM; SystemBus maps all four onto the same RamRegion.
