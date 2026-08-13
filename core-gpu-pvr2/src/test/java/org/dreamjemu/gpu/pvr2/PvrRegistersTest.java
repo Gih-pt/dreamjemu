@@ -3,37 +3,71 @@ package org.dreamjemu.gpu.pvr2;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PvrRegistersTest {
 
     private static final long SPG_STATUS_OFFSET = 0x10CL;
 
+    // Derived the same way PvrRegisters.STEPS_PER_LINE is (see its Javadoc): matches the real,
+    // cited constants (SH-4's 200MHz clock, NTSC's 59.94Hz field rate and 262-line field length)
+    // this class's tests need to know to drive a real tick() sequence deterministically.
+    private static final long STEPS_PER_LINE = Math.round(200_000_000L / 59.94 / 262);
+    private static final int LINES_PER_FIELD = 262;
+
     @Test
-    void spgStatusStartsAtZeroAndIncrementsOnEachRead() {
-        // Confirms the real-world case this class exists for: a real Sonic Adventure dump's
-        // "while ((SPG_STATUS & 0x1FF) == 0) {}" spin-wait needs the very first read to already
-        // be nonzero-after-increment for the loop to terminate promptly — see this class's
-        // Javadoc for the full real-world context.
+    void readingSpgStatusHasNoSideEffect() {
+        // Confirms the exact bug class this class was rewritten to fix: an earlier version made
+        // SPG_STATUS advance on every *read*, which is backwards (real video hardware runs
+        // autonomously, not because software polled it) — see PvrRegisters' own Javadoc. Reading
+        // it repeatedly, with no tick() calls in between, must never change its value.
         PvrRegisters registers = new PvrRegisters();
 
-        assertEquals(1, registers.read32(SPG_STATUS_OFFSET), "first read must already be nonzero");
-        assertEquals(2, registers.read32(SPG_STATUS_OFFSET));
-        assertEquals(3, registers.read32(SPG_STATUS_OFFSET));
+        int first = registers.read32(SPG_STATUS_OFFSET);
+        int second = registers.read32(SPG_STATUS_OFFSET);
+        int third = registers.read32(SPG_STATUS_OFFSET);
+
+        assertEquals(0, first, "scanline starts at 0");
+        assertEquals(first, second, "reading must not change the value");
+        assertEquals(first, third, "reading must not change the value");
     }
 
     @Test
-    void spgStatusWrapsWithinTheReal10BitScanlineField() {
-        // Real hardware's scanline field is 10 bits (0-1023); confirms this placeholder counter
-        // respects that width rather than overflowing into the fieldnum/blank/hsync/vsync bits
-        // (10-13) it deliberately leaves at 0 (not modeled yet — see this class's Javadoc).
+    void tickAdvancesScanlineOnlyAfterEnoughSteps() {
+        // Confirms scanline genuinely reflects elapsed emulated time (steps), not read
+        // frequency — the core fix this class exists for.
         PvrRegisters registers = new PvrRegisters();
 
-        int last = 0;
-        for (int i = 0; i < 1024; i++) {
-            last = registers.read32(SPG_STATUS_OFFSET);
+        for (long i = 0; i < STEPS_PER_LINE - 1; i++) {
+            assertFalse(registers.tick(), "must not report a VBlank before a full line's worth of steps");
         }
-        assertEquals(1024 & 0x3FF, last, "value after exactly 1024 reads must have wrapped back to 0");
-        assertEquals(1, registers.read32(SPG_STATUS_OFFSET), "the next read continues from the wrapped value");
+        assertEquals(0, registers.read32(SPG_STATUS_OFFSET), "scanline must still be 0 just before the line completes");
+
+        registers.tick(); // the step that completes the first line
+
+        assertEquals(1, registers.read32(SPG_STATUS_OFFSET), "scanline must advance to 1 after exactly one line's steps");
+    }
+
+    @Test
+    void tickReportsVblankExactlyWhenTheFieldWraps() {
+        // Confirms the real-world case this class exists for: after a full field's worth of
+        // lines, tick() must report a VBlank (true) — this is what app-cli's Main uses to decide
+        // when to set HollySystemRegisters' VBLANK_BEGIN and try to deliver a real interrupt.
+        PvrRegisters registers = new PvrRegisters();
+        long totalStepsInAField = STEPS_PER_LINE * LINES_PER_FIELD;
+
+        boolean sawVblank = false;
+        for (long i = 0; i < totalStepsInAField; i++) {
+            if (registers.tick()) {
+                assertFalse(sawVblank, "must report exactly one VBlank per field, not more");
+                sawVblank = true;
+                assertEquals(totalStepsInAField - 1, i, "must fire on the very last step of the field, not early or late");
+            }
+        }
+
+        assertTrue(sawVblank, "must have reported a VBlank exactly once over a full field's worth of steps");
+        assertEquals(0, registers.read32(SPG_STATUS_OFFSET), "scanline must have wrapped back to 0 after the field completes");
     }
 
     @Test
@@ -53,7 +87,7 @@ class PvrRegistersTest {
         // hardware) are silently ignored — no exception, no state change, matching
         // UnmappedRegion's documented "don't throw, bring-up needs this" reasoning.
         registers.write32(SPG_STATUS_OFFSET, 0xDEADBEEF);
-        assertEquals(1, registers.read32(SPG_STATUS_OFFSET), "a write to SPG_STATUS must not perturb the counter");
+        assertEquals(0, registers.read32(SPG_STATUS_OFFSET), "a write to SPG_STATUS must not perturb the counter");
     }
 
     @Test

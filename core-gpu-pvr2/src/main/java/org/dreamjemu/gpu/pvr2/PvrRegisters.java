@@ -19,20 +19,32 @@ import java.util.logging.Logger;
  * whose low 10 bits report the video hardware's current scanline number, counting up once per
  * frame as the display is drawn.
  *
- * <p><b>Only {@code SPG_STATUS} is modeled, and only approximately.</b> This project has no real
- * video timing yet (no pixel clock, no frame period, no interlace/field tracking) — implementing
- * that accurately is a much larger undertaking than this one real-world blocker calls for. What
- * {@link #readSpgStatus()} does instead is the minimum needed to unblock this specific confirmed
- * real-world poll: increment a free-running counter by 1 on every {@code SPG_STATUS} read, so
- * "wait until the scanline counter is nonzero" (the actual real-world loop found) terminates
- * after its first read here, instead of forever (this block previously fell into
- * {@link org.dreamjemu.system.UnmappedRegion}, which always returns {@code 0} — the loop's exact
- * failure mode). This is a deliberate placeholder, not real timing — {@code fieldnum}/
- * {@code blank}/{@code hsync}/{@code vsync} (bits 10-13) are left at {@code 0} since nothing has
- * confirmed a real need for them yet, and the counter advances once per *register read*, not
- * once per real scanline period. If/when real video timing is needed (frame-rate-accurate
- * rendering, VBlank-interrupt-driven code, etc.), this needs to be replaced with a real
- * pixel-clock-driven counter — this comment is the marker for that.
+ * <p><b>Only {@code SPG_STATUS} is modeled, and only approximately — but driven by real,
+ * autonomous elapsed time, not by software polling it.</b> An earlier version of this class made
+ * the scanline counter advance on every <i>read</i>, which — on reflection — is backwards: real
+ * video hardware runs continuously whether or not software ever looks at it; a register that only
+ * changes because software happened to poll it isn't modeling the hardware, it's just making the
+ * specific poll loop that was found go away. {@link #tick()} fixes this: it's driven by
+ * {@code app-cli}'s own step loop (once per {@code Sh4Cpu.step()}, regardless of whether anything
+ * reads {@code SPG_STATUS} at all), so the scanline counter — and, in turn, the VBlank event
+ * {@link #tick()} reports — genuinely reflects elapsed emulated program execution, not read
+ * frequency.
+ *
+ * <p>This project has no real per-instruction cycle accounting yet (each {@code Sh4Cpu.step()}
+ * is treated as elapsing an equal, undifferentiated unit of time, regardless of which real SH-4
+ * instruction it executed), so the one deliberate, clearly-labeled approximation left is
+ * {@code 1 step ≈ 1 real SH-4 clock cycle}. Every other constant this timing is derived from is
+ * real, cited hardware: {@link #SH4_CLOCK_HZ} (the documented SH7091/SH-4 200MHz core clock) and
+ * {@link #NTSC_FIELD_RATE_HZ}/{@link #LINES_PER_FIELD} (the standard NTSC field rate and
+ * 262-line field length). {@link #STEPS_PER_LINE} is derived from those, not invented, and
+ * VBlank is reported as beginning exactly when the per-field line counter wraps back to line 0 —
+ * a reasonable, transparent approximation of "start of vertical blanking" given this project
+ * doesn't parse the real {@code SPG_LOAD}/{@code SPG_VBLANK} configuration registers real code
+ * would otherwise use to define the exact active/blanking split (those aren't implemented yet —
+ * nothing has confirmed a need for them beyond this approximation so far). If/when real
+ * per-instruction cycle costs or real {@code SPG_LOAD}-driven timing are needed, this is the
+ * marker for where to replace the approximation, not the "1 step ≈ 1 cycle" premise most bring-up
+ * emulators start from before a cycle-accurate core exists.
  *
  * <p>Every other PVR2 register in this block (there are dozens — ID, REVISION, SOFTRESET,
  * STARTRENDER, the whole tile-accelerator register set, etc.) falls back to exactly
@@ -59,10 +71,28 @@ public final class PvrRegisters implements MemoryRegion {
      */
     private static final long SPG_STATUS_OFFSET = 0x10CL;
 
-    /** The 10-bit {@code scanline} field's mask — see {@link #readSpgStatus()}'s Javadoc. */
-    private static final int SCANLINE_MASK = 0x3FF;
+    /** SH7091/SH-4's real, documented core clock frequency. */
+    private static final long SH4_CLOCK_HZ = 200_000_000L;
+
+    /** Standard NTSC field rate. */
+    private static final double NTSC_FIELD_RATE_HZ = 59.94;
+
+    /**
+     * Standard NTSC field length. See this class's Javadoc for why this is used as the wrap
+     * point for reporting a VBlank, even though real hardware's active/blanking split within a
+     * field is configured by {@code SPG_LOAD}/{@code SPG_VBLANK} (not parsed here yet).
+     */
+    private static final int LINES_PER_FIELD = 262;
+
+    /**
+     * Derived, not invented — see this class's Javadoc for the one approximation this rests on
+     * ({@code 1 step ≈ 1 cycle}). {@code SH4_CLOCK_HZ / NTSC_FIELD_RATE_HZ / LINES_PER_FIELD}.
+     */
+    private static final long STEPS_PER_LINE =
+            Math.round(SH4_CLOCK_HZ / NTSC_FIELD_RATE_HZ / LINES_PER_FIELD);
 
     private int scanline;
+    private long stepsSinceLastLine;
 
     @Override
     public String name() {
@@ -89,7 +119,9 @@ public final class PvrRegisters implements MemoryRegion {
     @Override
     public int read32(long offset) {
         if (offset == SPG_STATUS_OFFSET) {
-            return readSpgStatus();
+            // A plain read of real, tick-driven state — no side effect on the value itself,
+            // unlike the read-driven placeholder this replaced. See this class's Javadoc.
+            return scanline;
         }
         logAccess("read32", offset);
         return 0;
@@ -122,14 +154,29 @@ public final class PvrRegisters implements MemoryRegion {
     }
 
     /**
-     * Synthesizes {@code SPG_STATUS} — see this class's Javadoc for why this is a deliberate,
-     * read-driven placeholder rather than real pixel-clock timing. Wraps within the real
-     * hardware's 10-bit {@code scanline} field ({@code fieldnum}/{@code blank}/{@code hsync}/
-     * {@code vsync}, bits 10-13, are left {@code 0} — not modeled).
+     * Advances real, autonomous video timing by one emulated step — see this class's Javadoc for
+     * the full reasoning. Meant to be called exactly once per {@code Sh4Cpu.step()} by whoever
+     * owns both (currently {@code app-cli}'s {@code Main}), regardless of whether anything reads
+     * {@code SPG_STATUS} in between.
+     *
+     * @return {@code true} exactly on the step where the per-field line counter wraps back to
+     *         line 0 — the approximation this class uses for "a new field's VBlank has begun"
+     *         (see this class's Javadoc). Callers are expected to react to this (set
+     *         {@code HollySystemRegisters}' {@code VBLANK_BEGIN} bit and try to deliver a real
+     *         CPU interrupt) — {@code false} every other step.
      */
-    private int readSpgStatus() {
-        scanline = (scanline + 1) & SCANLINE_MASK;
-        return scanline;
+    public boolean tick() {
+        stepsSinceLastLine++;
+        if (stepsSinceLastLine < STEPS_PER_LINE) {
+            return false;
+        }
+        stepsSinceLastLine = 0;
+        scanline++;
+        if (scanline >= LINES_PER_FIELD) {
+            scanline = 0;
+            return true;
+        }
+        return false;
     }
 
     private void logAccess(String kind, long offset) {

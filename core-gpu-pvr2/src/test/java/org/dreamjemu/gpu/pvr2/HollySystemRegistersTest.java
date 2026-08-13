@@ -3,39 +3,56 @@ package org.dreamjemu.gpu.pvr2;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HollySystemRegistersTest {
 
     private static final long SB_ISTNRM_OFFSET = 0x100L;
-    private static final int VBLANK_BEGIN_BIT = 1 << 3;
+    private static final int VBLANK_BEGIN_BIT = HollySystemRegisters.VBLANK_BEGIN_BIT;
 
     @Test
-    void istnrmAlwaysReportsVblankBeginPendingOnRead() {
-        // Confirms the real-world case this class exists for: a real Sonic Adventure dump's
-        // "while ((SB_ISTNRM & 0x8) == 0) {}" spin-wait (VBLANK_BEGIN, bit 3) needs every read to
-        // already have that bit set for the loop to terminate promptly — see this class's
-        // Javadoc for the full real-world context.
+    void readingIstnrmHasNoSideEffectAndDefaultsToNothingPending() {
+        // Confirms the exact bug class this class was rewritten to fix: an earlier version made
+        // VBLANK_BEGIN always read as pending, regardless of whether a real VBlank had ever
+        // happened — see this class's Javadoc. A fresh instance, before setVblankBeginPending()
+        // is ever called, must report nothing pending, and reading it must never change it.
         HollySystemRegisters registers = new HollySystemRegisters();
 
-        int value = registers.read32(SB_ISTNRM_OFFSET);
+        int first = registers.read32(SB_ISTNRM_OFFSET);
+        int second = registers.read32(SB_ISTNRM_OFFSET);
 
-        assertTrue((value & VBLANK_BEGIN_BIT) != 0, "VBLANK_BEGIN must be set on the very first read");
-        assertTrue((registers.read32(SB_ISTNRM_OFFSET) & VBLANK_BEGIN_BIT) != 0, "and every read after");
+        assertEquals(0, first, "nothing pending until setVblankBeginPending() is genuinely called");
+        assertEquals(first, second, "reading must not change the value");
+        assertFalse(registers.hasPendingNormalInterrupt());
     }
 
     @Test
-    void writingToIstnrmClearsAckedBitsUntilTheNextRead() {
-        // Real hardware's documented write-1-to-clear acknowledgement convention. Confirms the
-        // next read sets VBLANK_BEGIN again after an ack (since nothing tracks real frame timing
-        // to know when a genuine next VBlank would occur — see this class's Javadoc).
+    void setVblankBeginPendingSetsTheBitForReal() {
+        // The real, event-driven replacement for the old "always pending" placeholder — meant to
+        // be called by app-cli's Main exactly when PvrRegisters.tick() reports a real VBlank.
         HollySystemRegisters registers = new HollySystemRegisters();
-        registers.read32(SB_ISTNRM_OFFSET); // VBLANK_BEGIN now set
+
+        registers.setVblankBeginPending();
+
+        assertTrue((registers.read32(SB_ISTNRM_OFFSET) & VBLANK_BEGIN_BIT) != 0);
+        assertTrue(registers.hasPendingNormalInterrupt());
+    }
+
+    @Test
+    void writingToIstnrmClearsAckedBitsAndTheyStayClearedUntilGenuinelySetAgain() {
+        // Real hardware's documented write-1-to-clear acknowledgement convention. Confirms an
+        // acked bit stays clear afterward — unlike the old placeholder, which re-set it on the
+        // very next read regardless of whether a real VBlank had actually happened again.
+        HollySystemRegisters registers = new HollySystemRegisters();
+        registers.setVblankBeginPending();
 
         registers.write32(SB_ISTNRM_OFFSET, VBLANK_BEGIN_BIT); // ack: write 1 to clear
 
-        assertTrue((registers.read32(SB_ISTNRM_OFFSET) & VBLANK_BEGIN_BIT) != 0,
-                "the next read must report VBLANK_BEGIN pending again, not stay cleared forever");
+        assertEquals(0, registers.read32(SB_ISTNRM_OFFSET), "must stay cleared, not re-set itself");
+        assertFalse(registers.hasPendingNormalInterrupt());
+
+        assertEquals(0, registers.read32(SB_ISTNRM_OFFSET), "and stay cleared across repeated reads");
     }
 
     @Test
@@ -43,7 +60,7 @@ class HollySystemRegistersTest {
         // Write-1-to-clear means writing 0 to a bit must NOT set it — confirms this isn't
         // accidentally implemented as a plain overwrite.
         HollySystemRegisters registers = new HollySystemRegisters();
-        registers.read32(SB_ISTNRM_OFFSET); // VBLANK_BEGIN now set
+        registers.setVblankBeginPending();
 
         registers.write32(SB_ISTNRM_OFFSET, 0);
 

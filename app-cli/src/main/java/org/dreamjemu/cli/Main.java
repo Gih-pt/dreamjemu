@@ -326,15 +326,22 @@ public final class Main {
         // spin-wait on PVR2's SPG_STATUS register (see PvrRegisters' own Javadoc for the full
         // real-world context and why only SPG_STATUS is modeled, and only approximately).
         // Without this, that address falls into the generic UnmappedRegion catch-all below,
-        // which always reads 0 — exactly the loop's failure mode.
+        // which always reads 0 — exactly the loop's failure mode. Kept as a named variable (not
+        // just handed to mapRegion anonymously) so the step loop below can call tick() on it —
+        // see PvrRegisters.tick()'s own Javadoc for why that has to be driven by real elapsed
+        // steps, not by SPG_STATUS being read.
+        PvrRegisters pvrRegisters = new PvrRegisters();
         bus.mapRegion(DreamcastAddressMap.PVR2_REGISTERS_BASE, DreamcastAddressMap.PVR2_REGISTERS_SIZE,
-                new PvrRegisters());
+                pvrRegisters);
 
         // Added 2026-08-11 after a real Sonic Adventure run reached a second, immediately
         // following spin-wait, this time on Holly's SB_ISTNRM (VBLANK_BEGIN) — see
-        // HollySystemRegisters' own Javadoc for the full real-world context.
+        // HollySystemRegisters' own Javadoc for the full real-world context. Kept as a named
+        // variable for the same reason pvrRegisters is: the step loop below calls
+        // setVblankBeginPending() on it exactly when pvrRegisters.tick() reports a real VBlank.
+        HollySystemRegisters hollySystemRegisters = new HollySystemRegisters();
         bus.mapRegion(DreamcastAddressMap.HOLLY_SYSTEM_REGISTERS_BASE,
-                DreamcastAddressMap.HOLLY_SYSTEM_REGISTERS_SIZE, new HollySystemRegisters());
+                DreamcastAddressMap.HOLLY_SYSTEM_REGISTERS_SIZE, hollySystemRegisters);
 
         // Added 2026-08-04: a real BIOS installs this vector table before jumping to a game;
         // this BIOS-free HLE boot never did, so any code trying to use a BIOS syscall would read
@@ -453,6 +460,30 @@ public final class Main {
                     loopDetector.reset(); // keep checking for whatever comes next, same loop or not
                 }
                 cpu.step();
+
+                // Added 2026-08-12 after a real Sonic Adventure run reached a self-referential
+                // BRA (an infinite idle spin) right after code that set up interrupt-related
+                // hardware state — genuine "wait for a real interrupt" code, which no amount of
+                // faking register *read* values (what this project's earlier PvrRegisters/
+                // HollySystemRegisters versions did) can ever satisfy. This ticks real,
+                // autonomous video timing once per step (see PvrRegisters.tick()'s Javadoc for
+                // why it must be driven this way, not by SPG_STATUS being read), and on a real
+                // VBlank, sets the real interrupt-status bit — exactly what real Holly hardware
+                // does, whether or not this specific idle loop is even the code running at the
+                // time.
+                if (pvrRegisters.tick()) {
+                    hollySystemRegisters.setVblankBeginPending();
+                }
+                // Real hardware keeps a pending Holly interrupt line continuously asserted until
+                // the CPU actually accepts it (which might not be the same step it became
+                // pending — e.g. if interrupts are still masked at that moment, and only
+                // unmasked later) — so this tries every step, not just the one tick() fired on,
+                // exactly matching that real "keeps asking until accepted" behavior rather than
+                // only offering the interrupt once and giving up.
+                if (hollySystemRegisters.hasPendingNormalInterrupt()) {
+                    cpu.tryDeliverInterrupt(HollySystemRegisters.NORMAL_INTERRUPT_PRIORITY_LEVEL,
+                            HollySystemRegisters.NORMAL_INTERRUPT_INTEVT);
+                }
             }
 
             System.out.println("Executed " + steps + " steps without hitting an unimplemented instruction.");

@@ -28,21 +28,22 @@ import java.util.logging.Logger;
  * (bit 3) and waiting for it to become nonzero — genuine VBlank-wait code, a completely coherent
  * continuation of the {@code SPG_STATUS} scanline poll it followed.
  *
- * <p><b>Only {@code SB_ISTNRM} is modeled, and only its {@code VBLANK_BEGIN} bit (3), and only
- * approximately</b> — same reasoning as {@link PvrRegisters}' {@code SPG_STATUS}: this project
- * has no real video timing yet, so a real VBlank interrupt can never actually fire. Rather than
- * build a real interrupt controller for this one confirmed blocker, {@link #readIstnrm()} always
- * reports {@code VBLANK_BEGIN} as pending on every read — enough for "wait until VBlank begins"
- * to terminate immediately, every time it's polled, instead of never (this address previously
- * fell into {@link org.dreamjemu.system.UnmappedRegion}, which always returns {@code 0} — the
- * loop's exact failure mode). Writes are honored as the real hardware's documented
- * write-1-to-clear acknowledgement convention ({@link #writeIstnrm(int)}), so real code that acks
- * the interrupt behaves sensibly — the bit simply reappears on the next read, since nothing here
- * tracks real frame timing to know when a *genuine* next VBlank would occur. This is a deliberate
- * placeholder, not a real interrupt controller — the marker for where real Holly interrupt
- * timing (and the other {@code SB_ISTNRM}/{@code SB_ISTEXT}/{@code SB_ISTERR} bits — GD-ROM DMA
- * done, Maple DMA done, PVR render done, etc.) would need to replace this, if/when a real disc
- * run confirms one of those is actually needed.
+ * <p><b>Only {@code SB_ISTNRM} is modeled, and only its {@code VBLANK_BEGIN} bit (3) — set by
+ * real, autonomous video timing, not by software reading this register.</b> An earlier version
+ * of this class made {@code VBLANK_BEGIN} always read as pending, which — on reflection — has
+ * the same problem {@code PvrRegisters}' old read-driven {@code SPG_STATUS} had: it makes the
+ * *symptom* (this one poll loop) disappear without the register meaning anything close to what
+ * real hardware's interrupt-status register means. This version instead only ever sets
+ * {@code VBLANK_BEGIN} when {@link #setVblankBeginPending()} is called — which {@code app-cli}'s
+ * {@code Main} does exactly when {@link PvrRegisters#tick()} reports a real (approximated, but
+ * autonomous) VBlank actually beginning, and — crucially — {@code Main} also now tries to
+ * deliver a genuine SH-4 interrupt at that same moment ({@code Sh4Cpu.tryDeliverInterrupt}), so
+ * code that's genuinely waiting for a real interrupt (not just polling this register) gets one
+ * for real. Reads simply return the real current value — no synthesis, no side effect. Writes
+ * honor real hardware's documented write-1-to-clear acknowledgement convention
+ * ({@link #writeIstnrm(int)}), so real code that acks the interrupt behaves exactly like it
+ * would on real hardware: the bit stays clear until the next genuine VBlank actually happens (not
+ * "on the next read", the way the old version faked it).
  *
  * <p>Every other register in this block falls back to exactly
  * {@link org.dreamjemu.system.UnmappedRegion}'s behavior (log at {@code FINE}, read as
@@ -71,7 +72,24 @@ public final class HollySystemRegisters implements MemoryRegion {
      * {@code asic.h}: {@code ASIC_EVT_PVR_VBLANK_BEGIN = 0x0003} — see this class's Javadoc for
      * why KOS's event code doubles as the real bit position here.
      */
-    private static final int VBLANK_BEGIN_BIT = 1 << 3;
+    public static final int VBLANK_BEGIN_BIT = 1 << 3;
+
+    /**
+     * Real SH-4 interrupt priority level for Holly's "normal" interrupt group (which
+     * {@code SB_ISTNRM} — and so {@code VBLANK_BEGIN} — belongs to), confirmed against two
+     * independent authoritative sources that agree exactly: lxdream's own {@code intc.c}
+     * interrupt-code table (listing {@code IRQ9 = 0x320} for this group), and the Linux kernel's
+     * {@code mach-dreamcast} IRQ demux source, which groups Holly's three interrupt status
+     * registers ({@code ISTNRM}/{@code ISTEXT}/{@code ISTERR}) into exactly three SH-4 external
+     * interrupt levels (9/11/13) in that same order.
+     */
+    public static final int NORMAL_INTERRUPT_PRIORITY_LEVEL = 9;
+
+    /**
+     * Real {@code INTEVT} code for Holly's "normal" interrupt group, confirmed against the same
+     * lxdream {@code intc.c} table (the entry paired with {@code IRQ9}, above).
+     */
+    public static final int NORMAL_INTERRUPT_INTEVT = 0x320;
 
     private int istnrm;
 
@@ -100,7 +118,9 @@ public final class HollySystemRegisters implements MemoryRegion {
     @Override
     public int read32(long offset) {
         if (offset == SB_ISTNRM_OFFSET) {
-            return readIstnrm();
+            // A plain read of real state — no side effect on the value itself, unlike the
+            // always-pending placeholder this replaced. See this class's Javadoc.
+            return istnrm;
         }
         logAccess("read32", offset);
         return 0;
@@ -137,19 +157,33 @@ public final class HollySystemRegisters implements MemoryRegion {
     }
 
     /**
-     * Synthesizes {@code SB_ISTNRM} — see this class's Javadoc for why {@code VBLANK_BEGIN} is
-     * always reported pending, rather than driven by real frame timing.
+     * Whether any bit in this real "normal" interrupt-status register is currently pending —
+     * i.e. whether real Holly hardware would be continuously asserting its normal-interrupt line
+     * right now. Used by {@code app-cli}'s {@code Main} to retry interrupt delivery every step
+     * (not just the one step {@link #setVblankBeginPending()} was called on), exactly matching
+     * how a real, continuously-asserted hardware interrupt line behaves — the CPU accepts it
+     * whenever it's next unmasked, which might not be the same step it became pending.
      */
-    private int readIstnrm() {
+    public boolean hasPendingNormalInterrupt() {
+        return istnrm != 0;
+    }
+
+    /**
+     * Sets {@code VBLANK_BEGIN} for real — meant to be called by whoever owns both this class and
+     * {@link PvrRegisters} (currently {@code app-cli}'s {@code Main}) exactly when
+     * {@link PvrRegisters#tick()} reports a real VBlank beginning, not on every read. See this
+     * class's Javadoc for the full reasoning.
+     */
+    public void setVblankBeginPending() {
         istnrm |= VBLANK_BEGIN_BIT;
-        return istnrm;
     }
 
     /**
      * Real hardware's documented write-1-to-clear acknowledgement convention: writing a 1 to a
-     * bit clears that bit (writing 0 to a bit leaves it unchanged). {@link #readIstnrm()} will
-     * simply set {@code VBLANK_BEGIN} again on the next read regardless — see this class's
-     * Javadoc.
+     * bit clears that bit (writing 0 to a bit leaves it unchanged). Unlike the placeholder this
+     * replaced, an acked bit now stays clear until {@link #setVblankBeginPending()} is genuinely
+     * called again at the next real VBlank — not "on the very next read" (see this class's
+     * Javadoc).
      */
     private void writeIstnrm(int value) {
         istnrm &= ~value;

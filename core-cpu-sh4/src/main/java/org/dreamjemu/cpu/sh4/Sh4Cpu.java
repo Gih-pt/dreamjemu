@@ -44,17 +44,20 @@ import org.dreamjemu.system.Bus;
  *       {@link #step()}) is supported; everything else throws
  *       {@link UnsupportedOperationException} with the offending opcode and
  *       address, by design — gaps should be loud, not silently wrong.</li>
- *   <li>The Status Register only models the T ("test"/comparison result)
- *       flag so far; other bits (interrupt mask, privilege mode, etc.) are
- *       not modeled yet. {@code RTE} restores the whole 32-bit register
- *       wholesale from {@link #ssr} regardless, so this is only a gap for
- *       code that inspects those other bits, not for RTE's own correctness.</li>
- *   <li>There is no real exception/interrupt entry mechanism yet (no
- *       {@code TRAPA}, no interrupt controller, no automatic hardware
- *       save-to-SSR/SPC-and-jump-to-vector on an exception) — only the
- *       {@code RTE} <i>return</i> path is implemented. Tests exercise it by
- *       setting {@link #ssr}/{@link #spc} directly, the same way BSR/JSR/RTS
- *       tests set {@link #pr} directly without a real preceding call.</li>
+ *   <li>The Status Register models the T ("test"/comparison result) flag, and (added
+ *       specifically for real interrupt delivery — see {@link #tryDeliverInterrupt}) {@code BL}
+ *       and {@code IMASK}; other bits ({@code MD}, {@code RB}, {@code FD}, {@code S}, and the
+ *       register-bank-switching {@code RB} implies) are not modeled. {@code RTE} restores the
+ *       whole 32-bit register wholesale from {@link #ssr} regardless, so this is only a gap for
+ *       code that inspects/relies on those other bits, not for RTE's own correctness.</li>
+ *   <li>Real interrupt delivery ({@link #tryDeliverInterrupt}) exists and is used for Holly's
+ *       "normal" interrupt group (VBlank — see {@code HollySystemRegisters}' Javadoc). No
+ *       {@code TRAPA}-triggering-mechanism or general-exception entry exists yet (only
+ *       {@code RTE}'s <i>return</i> path, and {@code TRAPA}'s own opcode handler, which sets
+ *       {@link #ssr}/{@link #spc}/{@link #tra} and jumps to {@link #vbr}{@code + 0x100} directly)
+ *       — a real CPU-detected general exception (e.g. an illegal instruction) doesn't yet trigger
+ *       entry automatically the way {@link #tryDeliverInterrupt} now does for hardware
+ *       interrupts.</li>
  * </ul>
  */
 public class Sh4Cpu {
@@ -121,6 +124,17 @@ public class Sh4Cpu {
      */
     public int spc;
 
+    /**
+     * Interrupt Event Register — real hardware sets this to a code identifying which
+     * exception/interrupt is being entered (e.g. {@code 0x320} for a "normal" Holly
+     * interrupt — see {@link #tryDeliverInterrupt}'s Javadoc), so a real handler jumped to via
+     * {@link #vbr} can tell what happened. Confirmed against lxdream's own {@code intc.c}
+     * interrupt-code table (a well-established, independently-verifiable reference for these
+     * SH-4 interrupt event codes) and the Renesas SH-4 Programming Manual's own exception-code
+     * table.
+     */
+    public int intevt;
+
     /** High 32 bits of the 64-bit multiply-accumulate result (DMULS.L/DMULU.L). Unused by MUL.L/MULS.W/MULU.W. */
     public int mach;
 
@@ -165,8 +179,43 @@ public class Sh4Cpu {
      */
     public int fpscr = 0x00040001;
 
-    /** Status register. Only bit 0 (the T flag) is modeled so far. */
-    private int sr;
+    /**
+     * Status register. Models the T ("test"/comparison result) flag (bit 0), and — added
+     * specifically to make real interrupt delivery possible, see {@link #tryDeliverInterrupt} —
+     * {@code BL} (bit 28, "exception/interrupt block": blocks all interrupt requests while set)
+     * and {@code IMASK} (bits 7-4, a 4-bit interrupt priority mask: an interrupt is accepted only
+     * if its priority level is strictly greater than {@code IMASK}). Other bits ({@code MD},
+     * {@code RB}, {@code FD}, {@code S}, {@code Q}/{@code M} — the latter two tracked separately
+     * in {@link #qFlag}/{@link #mFlag} for the DIV0U/DIV0S/DIV1 sequence, not through this field
+     * — {@code RC}) are not modeled. {@code STC SR,Rn}/{@code LDC Rn,SR} already move the whole
+     * 32-bit value, so nothing new was needed there for {@code BL}/{@code IMASK} to become
+     * settable/readable by real code — only the meaning behind two of the bits changed.
+     *
+     * <p><b>Deliberately NOT left at Java's {@code int} default of {@code 0}</b> — real hardware
+     * resets this to {@code 0x700000F0} (confirmed against two independent authoritative
+     * sources that agree exactly: the Renesas/STMicroelectronics SH-4 Programming Manual's own
+     * reset-value table, and a real-world SH-4 homebrew example explicitly setting
+     * {@code SR_Configure: .long 0x700000f0} to reconstruct {@code MD=1}/{@code RB=1}/
+     * {@code BL=1}/{@code IMASK=1111} from scratch) — decoded: {@code MD=1} (privileged, not
+     * modeled), {@code RB=1} (register bank 1, not modeled), {@code BL=1} (interrupts blocked),
+     * {@code IMASK=1111} (all interrupt priority levels 0-14 masked), {@code T=0}. This project
+     * has specifically been bitten before by exactly this class of bug ({@link #pr}/{@code r[15]}
+     * and {@link #fpscr} both needed the same fix after silently defaulting to {@code 0} instead
+     * of their real reset values — see {@code HleBootLoader.INITIAL_STACK_POINTER}'s and
+     * {@link #fpscr}'s Javadoc) — fixed proactively here too, specifically because {@code BL}/
+     * {@code IMASK} are about to start mattering for real (a wrong default here would mean
+     * {@link #tryDeliverInterrupt} either never fires when it should, or fires before real code
+     * has explicitly unmasked interrupts the way real boot/runtime-startup code always does).
+     * {@code T} itself is unaffected ({@code 0x700000F0}'s bit 0 is {@code 0}, same as before).
+     */
+    private int sr = 0x700000F0;
+
+    /** {@code SR.BL} (bit 28) — see {@link #sr}'s Javadoc. */
+    private static final int SR_BL_BIT = 1 << 28;
+
+    /** {@code SR.IMASK} (bits 7-4) — see {@link #sr}'s Javadoc. */
+    private static final int SR_IMASK_SHIFT = 4;
+    private static final int SR_IMASK_MASK = 0xF;
 
     /** Q and M flags, used only by the DIV0U/DIV0S/DIV1 bit-serial division sequence. */
     private boolean qFlag;
@@ -186,6 +235,62 @@ public class Sh4Cpu {
 
     private void setT(boolean value) {
         sr = value ? (sr | 1) : (sr & ~1);
+    }
+
+    /** {@code SR.BL} — see {@link #sr}'s Javadoc. */
+    public boolean blFlag() {
+        return (sr & SR_BL_BIT) != 0;
+    }
+
+    /** {@code SR.IMASK} — see {@link #sr}'s Javadoc. */
+    public int imaskLevel() {
+        return (sr >>> SR_IMASK_SHIFT) & SR_IMASK_MASK;
+    }
+
+    /**
+     * Tries to deliver a real hardware interrupt — the actual SH-4 exception-entry sequence,
+     * not a shortcut: real hardware's documented interrupt-acceptance rule is checked first
+     * ({@code BL} must be clear, and {@code priorityLevel} must exceed {@code IMASK} — see
+     * {@link #sr}'s Javadoc), and only then does real entry happen: {@link #ssr} = the
+     * pre-interrupt {@link #sr}, {@link #spc} = the pre-interrupt {@code pc} (the address
+     * execution would otherwise have resumed at — real hardware delivers interrupts between
+     * instructions, never mid-instruction, so this is always a clean boundary), {@link #intevt}
+     * = {@code intevtCode}, {@code SR.BL} set to {@code 1} (blocking further interrupts until
+     * the handler explicitly clears it or executes {@code RTE}, exactly like real hardware),
+     * and {@code pc} jumps to {@link #vbr}{@code + 0x600} — the real, fixed SH-4 vector offset
+     * for interrupts (as opposed to {@code TRAPA}'s {@code + 0x100} or a general exception's
+     * {@code + 0x400} — confirmed against KallistiOS's own {@code irq.h}, which documents all
+     * four real offsets explicitly).
+     *
+     * <p>Added specifically because a real Sonic Adventure run reached a self-referential
+     * {@code BRA} (branching to itself, an infinite idle spin) immediately after code that set
+     * up interrupt-related hardware state — genuine "wait for a real interrupt to preempt me"
+     * code, not a hardware-register poll like the ones this project's HLE register blocks
+     * ({@code PvrRegisters}/{@code HollySystemRegisters}) already handle. No amount of faking
+     * register *read* values can make that kind of loop progress — it needs an actual interrupt
+     * to actually arrive, which is what this method exists to make real.
+     *
+     * @param priorityLevel the interrupt's real hardware priority level (9/11/13 for Holly's
+     *                       normal/external/error interrupt groups — see
+     *                       {@code HollySystemRegisters}' Javadoc)
+     * @param intevtCode the real {@code INTEVT} code to deliver (e.g. {@code 0x320} for Holly's
+     *                    "normal" interrupt group, confirmed against lxdream's {@code intc.c})
+     * @return {@code true} if the interrupt was actually delivered (execution jumped to the
+     *         handler), {@code false} if it's currently blocked/masked and nothing happened —
+     *         callers are expected to try again later (e.g. next tick) rather than lose the
+     *         request, exactly like real hardware keeps asserting a pending interrupt line
+     *         until the CPU is ready to accept it
+     */
+    public boolean tryDeliverInterrupt(int priorityLevel, int intevtCode) {
+        if (blFlag() || priorityLevel <= imaskLevel()) {
+            return false;
+        }
+        ssr = sr;
+        spc = pc;
+        intevt = intevtCode;
+        sr |= SR_BL_BIT;
+        pc = vbr + 0x600;
+        return true;
     }
 
     /** The Q flag, as left by the most recent DIV0U/DIV0S/DIV1. */

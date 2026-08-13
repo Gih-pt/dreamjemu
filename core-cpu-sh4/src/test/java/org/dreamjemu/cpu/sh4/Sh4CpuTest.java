@@ -745,6 +745,87 @@ class Sh4CpuTest {
     }
 
     @Test
+    void interruptsAreFullyBlockedAtResetMatchingRealHardware() {
+        // Confirms the exact bug class this project has already found and fixed twice (PR/R15,
+        // FPSCR): SR must NOT default to Java's int 0 now that BL/IMASK mean something real —
+        // real hardware resets with BL=1 (interrupts blocked) and IMASK=1111 (everything masked),
+        // not "everything wide open" (which is what SR=0 would mean). See sr's own Javadoc.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0x1000);
+        cpu.vbr = 0x8C000000;
+
+        boolean delivered = cpu.tryDeliverInterrupt(9, 0x320);
+
+        assertFalse(delivered, "interrupts must be fully blocked at reset, matching real hardware");
+        assertEquals(0x1000, cpu.pc, "pc must be unchanged when delivery is blocked");
+    }
+
+    @Test
+    void tryDeliverInterruptPerformsTheRealExceptionEntrySequenceOnceUnmasked() {
+        // Confirms the real SH-4 interrupt-entry sequence: SSR=pre-interrupt SR, SPC=the address
+        // execution would have resumed at, INTEVT=the delivered code, SR.BL set (blocking further
+        // interrupts), PC=VBR+0x600 (the real, fixed interrupt vector offset — confirmed against
+        // KallistiOS's own irq.h, which documents the 0x000/0x100/0x400/0x600 offsets).
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldcSr(1)); // LDC R1,SR
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.vbr = 0x8C000000;
+        cpu.r[1] = 0x00000000; // BL=0, IMASK=0 — fully unmasked
+
+        cpu.step(); // LDC R1,SR — real code unmasking interrupts, the way real boot code does
+
+        boolean delivered = cpu.tryDeliverInterrupt(9, 0x320);
+
+        assertTrue(delivered);
+        assertEquals(0x8C000000 + 0x600, cpu.pc, "pc must jump to the real interrupt vector offset");
+        assertEquals(2, cpu.spc, "spc must hold the pre-interrupt return address");
+        assertEquals(0x320, cpu.intevt);
+        assertEquals(0, cpu.ssr, "ssr must hold the pre-interrupt sr (0, as set by the LDC above)");
+        assertTrue(cpu.blFlag(), "BL must now be set, blocking further interrupts until RTE/software clears it");
+    }
+
+    @Test
+    void tryDeliverInterruptIsBlockedAfterANotYetAcknowledgedDelivery() {
+        // Confirms BL genuinely blocks a second delivery attempt before the handler has run
+        // RTE (or otherwise cleared BL) — matching real hardware's "one interrupt at a time"
+        // guarantee.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldcSr(1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.vbr = 0x8C000000;
+        cpu.r[1] = 0x00000000;
+        cpu.step();
+
+        boolean first = cpu.tryDeliverInterrupt(9, 0x320);
+        boolean second = cpu.tryDeliverInterrupt(9, 0x320);
+
+        assertTrue(first);
+        assertFalse(second, "a second attempt while BL is still set (no RTE yet) must be blocked");
+    }
+
+    @Test
+    void tryDeliverInterruptRespectsImaskPriorityComparison() {
+        // Real hardware's rule (confirmed against the SH-4 Programming Manual): an interrupt is
+        // masked if its priority level is the SAME AS OR LOWER than IMASK — only a level strictly
+        // greater than IMASK is accepted. Confirms this project's implementation uses that exact
+        // comparison, not an off-by-one version of it.
+        SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
+        bus.writeInstruction(0, ldcSr(1));
+        Sh4Cpu cpu = new Sh4Cpu(bus, 0);
+        cpu.vbr = 0x8C000000;
+        cpu.r[1] = 0x000000A0; // BL=0, IMASK=0xA=10
+        cpu.step();
+
+        boolean deliveredAtEqualLevel = cpu.tryDeliverInterrupt(10, 0x320); // 10 == IMASK: masked
+        boolean deliveredAtLowerLevel = cpu.tryDeliverInterrupt(9, 0x320); // 9 < IMASK: masked
+        boolean deliveredAtHigherLevel = cpu.tryDeliverInterrupt(11, 0x360); // 11 > IMASK: accepted
+
+        assertFalse(deliveredAtEqualLevel, "a priority level equal to IMASK must still be masked");
+        assertFalse(deliveredAtLowerLevel, "a priority level below IMASK must be masked");
+        assertTrue(deliveredAtHigherLevel, "a priority level above IMASK must be accepted");
+    }
+
+    @Test
     void cmpEqRegSetsAndClearsTFlag() {
         SimpleTestBus bus = new SimpleTestBus(MEM_SIZE);
         bus.writeInstruction(0, cmpEqReg(0, 1)); // CMP/EQ R1,R0
