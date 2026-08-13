@@ -451,7 +451,8 @@ public final class Main {
                             System.out.println("Left the previously reported loop after " + (steps - lastReportedAtStep)
                                     + " steps — this is a DIFFERENT loop:");
                         }
-                        printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps, cpu);
+                        printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps, cpu,
+                                hollySystemRegisters);
                         lastReportedLoopIdentity = identity;
                         distinctLoopsReported++;
                     }
@@ -578,7 +579,8 @@ public final class Main {
      * loop this shape could be the same category of gap.
      */
     private static void printLoopDetected(LoopDetector loopDetector, int[] pcRing, int[] opcodeRing,
-                                           int ringPushes, int ringCapacity, int steps, Sh4Cpu cpu) {
+                                           int ringPushes, int ringCapacity, int steps, Sh4Cpu cpu,
+                                           HollySystemRegisters hollySystemRegisters) {
         long period = loopDetector.period();
         System.out.println("Detected a stable repeating loop after " + steps + " total steps:");
         System.out.println("  Period: " + period + " instruction(s), confirmed over "
@@ -605,6 +607,18 @@ public final class Main {
             System.out.println(String.format("    R%-2d=0x%08X  R%-2d=0x%08X  R%-2d=0x%08X  R%-2d=0x%08X",
                     i, cpu.r[i], i + 1, cpu.r[i + 1], i + 2, cpu.r[i + 2], i + 3, cpu.r[i + 3]));
         }
+
+        // Added 2026-08-13 after real interrupt delivery (Sh4Cpu.tryDeliverInterrupt) still
+        // didn't unblock the BRA -2 idle loop found in the previous session — this is the one
+        // piece of information that actually answers why: whether the CPU currently has
+        // interrupts masked (BL/IMASK), and whether a real Holly interrupt is even pending right
+        // now (hasPendingNormalInterrupt()), from this project's actual PvrRegisters.tick()-driven
+        // timing. Distinguishing "interrupts are (correctly) still masked at this point" from
+        // "an interrupt is pending and unmasked but delivery still isn't happening" (a genuine
+        // bug) needs this, not just the general-purpose registers above.
+        System.out.println(String.format(
+                "  Interrupt state: SR.T=%s SR.BL=%s SR.IMASK=%d  Holly normal-interrupt pending=%s",
+                cpu.tFlag(), cpu.blFlag(), cpu.imaskLevel(), hollySystemRegisters.hasPendingNormalInterrupt()));
 
         System.out.println("This may be legitimate but slow work (e.g. a byte-at-a-time memset/.bss-clear");
         System.out.println("loop — see docs/STATUS.md) or a genuine spin-wait on hardware state this");
