@@ -19,6 +19,7 @@ import org.dreamjemu.cpu.sh4.Sh4Cpu;
 import org.dreamjemu.system.HleBootLoader;
 import org.dreamjemu.gpu.pvr2.HollySystemRegisters;
 import org.dreamjemu.gpu.pvr2.PvrRegisters;
+import org.dreamjemu.system.Bus;
 import org.dreamjemu.system.DreamcastAddressMap;
 import org.dreamjemu.system.SystemBus;
 import org.dreamjemu.common.log.LogConfig;
@@ -452,7 +453,7 @@ public final class Main {
                                     + " steps — this is a DIFFERENT loop:");
                         }
                         printLoopDetected(loopDetector, pcRing, opcodeRing, ringPushes, ringCapacity, steps, cpu,
-                                hollySystemRegisters);
+                                hollySystemRegisters, bus);
                         lastReportedLoopIdentity = identity;
                         distinctLoopsReported++;
                     }
@@ -580,7 +581,7 @@ public final class Main {
      */
     private static void printLoopDetected(LoopDetector loopDetector, int[] pcRing, int[] opcodeRing,
                                            int ringPushes, int ringCapacity, int steps, Sh4Cpu cpu,
-                                           HollySystemRegisters hollySystemRegisters) {
+                                           HollySystemRegisters hollySystemRegisters, Bus bus) {
         long period = loopDetector.period();
         System.out.println("Detected a stable repeating loop after " + steps + " total steps:");
         System.out.println("  Period: " + period + " instruction(s), confirmed over "
@@ -597,7 +598,21 @@ public final class Main {
                 if (index < 0) {
                     index += ringCapacity;
                 }
-                System.out.println(String.format("    PC=0x%08X opcode=0x%04X", pcRing[index], opcodeRing[index]));
+                int loopPc = pcRing[index];
+                int loopOpcode = opcodeRing[index];
+                System.out.println(String.format("    PC=0x%08X opcode=0x%04X", loopPc, loopOpcode));
+                // Added 2026-08-14: delayed branches (BRA/BSR/JSR/JMP/RTS/RTE/BT.S/BF.S) execute
+                // a delay-slot instruction at PC+2 BEFORE the jump — but Main only pushes one
+                // ring-buffer entry per Sh4Cpu.step() call, so that delay-slot instruction was
+                // otherwise invisible in this trace (a real BRA -2 idle loop still executes
+                // whatever is in its delay slot every single iteration; only the outer branch
+                // itself is unconditional). A plain, side-effect-free extra fetch (mirroring
+                // Sh4Cpu.fetch()'s own bus.read16 exactly) makes that visible.
+                if (isDelayedBranchOpcode(loopOpcode)) {
+                    int slotOpcode = bus.read16(Integer.toUnsignedLong(loopPc + 2)) & 0xFFFF;
+                    System.out.println(String.format("      (delay slot) PC=0x%08X opcode=0x%04X",
+                            loopPc + 2, slotOpcode));
+                }
             }
         }
 
@@ -637,6 +652,22 @@ public final class Main {
      * the loop body is too long to fully reconstruct from the ring buffer — an imperfect but safe
      * degradation (worst case, two large loops get treated as different when they're not).
      */
+    /**
+     * Mirrors {@code Sh4Cpu.isBranchOpcode} exactly (that one's private) — see this file's
+     * {@code printLoopDetected} for why this diagnostic needs to know which opcodes have a
+     * delay slot worth also fetching and displaying.
+     */
+    private static boolean isDelayedBranchOpcode(int opcode) {
+        return (opcode & 0xF000) == 0xA000   // BRA
+                || (opcode & 0xF000) == 0xB000  // BSR
+                || (opcode & 0xF0FF) == 0x400B  // JSR
+                || (opcode & 0xF0FF) == 0x402B  // JMP
+                || opcode == 0x000B             // RTS
+                || opcode == 0x002B             // RTE
+                || (opcode & 0xFF00) == 0x8D00  // BT/S
+                || (opcode & 0xFF00) == 0x8F00; // BF/S
+    }
+
     private static int identifyLoop(int[] pcRing, int ringPushes, int ringCapacity, long period) {
         long available = Math.min(ringPushes, ringCapacity);
         if (period <= 0 || period > available) {
