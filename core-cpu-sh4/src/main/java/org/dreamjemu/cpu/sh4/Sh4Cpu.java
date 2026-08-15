@@ -1172,11 +1172,26 @@ public class Sh4Cpu {
             // way this project has consistently implemented STS.L/LDS.L pairs together.
             r[n] = vbr;
         } else if ((opcode & 0xF0FF) == 0x400E) {
-            // LDC Rn,SR — loads the Status Register from a general-purpose register. Only bit 0
-            // (T) is meaningful in this interpreter's simplified SR model (see sr's Javadoc) —
-            // any other bits real code sets (privilege mode, interrupt mask, etc.) are stored but
-            // otherwise inert here, the same simplification already accepted for TRAPA's SSR/RTE.
+            // LDC Rn,SR — loads the Status Register from a general-purpose register. T, BL, and
+            // IMASK are meaningful in this interpreter's SR model (see sr's own Javadoc — BL/
+            // IMASK were added specifically for real interrupt delivery, see
+            // tryDeliverInterrupt); other bits real code sets (MD, RB, etc.) are stored but
+            // otherwise inert here.
+            //
+            // Logged at INFO (not TRACE) specifically because a real Sonic Adventure run reached
+            // a genuine "wait for a real interrupt" idle loop (BRA -2 + NOP delay slot — the
+            // textbook SH-4 idle-wait pattern) with BL correctly cleared but IMASK still at 15
+            // (every priority level masked), meaning tryDeliverInterrupt can never get through —
+            // and it wasn't obvious from the loop-detection diagnostics alone which LDC Rn,SR
+            // call (if any) was responsible, or what exact value it wrote. This makes every real
+            // SR write visible, cheaply enough to leave on: this project's real disc runs are in
+            // the tens of millions of steps, but LDC Rn,SR itself is rare (a handful of times
+            // total in a boot sequence, not per-instruction), unlike the per-instruction TRACE
+            // logging Sh4Cpu.step() already guards behind an isTraceEnabled() check.
+            int oldSr = sr;
             sr = r[n];
+            LOG.info("LDC R%d,SR at PC=0x%08X: SR 0x%08X -> 0x%08X (T=%s BL=%s IMASK=%d)",
+                    n, thisPc, oldSr, sr, tFlag(), blFlag(), imaskLevel());
         } else if ((opcode & 0xF0FF) == 0x0002) {
             // STC SR,Rn — reads SR back into a general-purpose register. Found necessary by a
             // real Sonic Adventure dump (opcode 0x0002, R0) after it executed 12,791,785 real
