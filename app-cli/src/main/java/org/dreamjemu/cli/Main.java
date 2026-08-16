@@ -369,6 +369,16 @@ public final class Main {
         // address near 0xFFFFFFFF instead of a real RAM address, corrupting whatever real data
         // (including saved copies of PR) a real stack would have held there.
         cpu.r[15] = HleBootLoader.INITIAL_STACK_POINTER;
+
+        // Added 2026-08-15 after a real Sonic Adventure run confirmed (via a dedicated LDC Rn,SR
+        // logging diagnostic — see that opcode's own comment) that real game code never lowers
+        // SR.IMASK itself across the entire observed boot sequence, the same "assumes the real
+        // BIOS already handled this" pattern as PR/r[15] above — see
+        // HleBootLoader.INITIAL_SR's own Javadoc for the full real-execution evidence this rests
+        // on. Without this, SR stays at Sh4Cpu's own real-hardware reset value (IMASK=1111,
+        // fully masked), and no real interrupt (including the VBlank one PvrRegisters.tick()/
+        // HollySystemRegisters below try to deliver every step) can ever actually reach the CPU.
+        cpu.setSr(HleBootLoader.INITIAL_SR);
         // Step budget history against the real Sonic Adventure dump, all on 2026-07-31:
         //   100,000    -> reached with no unimplemented instruction hit at all.
         //   5,000,000  -> also reached, twice more (once per LoopDetector refinement below).
@@ -482,7 +492,22 @@ public final class Main {
                 // unmasked later) — so this tries every step, not just the one tick() fired on,
                 // exactly matching that real "keeps asking until accepted" behavior rather than
                 // only offering the interrupt once and giving up.
-                if (hollySystemRegisters.hasPendingNormalInterrupt()) {
+                //
+                // Added 2026-08-16, refining the fix HleBootLoader.INITIAL_SR made: a real run
+                // confirmed the interrupt genuinely fires now (PC correctly jumped to
+                // vbr + 0x600), but VBR was still 0 (Sh4Cpu's own real hardware reset value —
+                // "starts at 0, same as real hardware out of reset", see vbr's own Javadoc) at
+                // that point, since real game code hadn't executed its own LDC Rn,VBR yet to
+                // install its own vector table — so the CPU jumped into genuinely unmapped
+                // memory (opcode 0x0000, an immediate crash) rather than a real handler. Real
+                // hardware wouldn't hit this: by the time interrupts are truly unmasked, a valid
+                // vector table (the BIOS's own, at minimum) is already in place — this project's
+                // HLE boot has no equivalent BIOS vector table to install, so the safe, still
+                // real-hardware-grounded equivalent is: don't try delivering an interrupt until
+                // real code has actually pointed VBR somewhere itself (a non-zero VBR is real
+                // code's own signal that it's ready to receive one — LDC Rn,VBR is the only way
+                // VBR ever changes, so this can't fire prematurely before that).
+                if (cpu.vbr != 0 && hollySystemRegisters.hasPendingNormalInterrupt()) {
                     cpu.tryDeliverInterrupt(HollySystemRegisters.NORMAL_INTERRUPT_PRIORITY_LEVEL,
                             HollySystemRegisters.NORMAL_INTERRUPT_INTEVT);
                 }
