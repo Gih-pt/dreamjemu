@@ -248,6 +248,22 @@ public class Sh4Cpu {
     }
 
     /**
+     * Overwrites the whole Status Register — the same real hardware-level operation
+     * {@code LDC Rn,SR} performs (see that opcode's own comment), exposed publicly specifically
+     * so a boot-loading caller can set real, pre-execution state the same direct way {@code pr}/
+     * {@code r[15]}/{@code vbr} already are (those are public fields; {@link #sr} stays private —
+     * encapsulated behind {@link #tFlag()}/{@link #blFlag()}/{@link #imaskLevel()} — specifically
+     * so nothing outside this class can quietly desync those helpers' meaning from the raw bits,
+     * the way a public field could invite). See {@code HleBootLoader.INITIAL_SR}'s Javadoc for
+     * why a caller needs this at all: this project's BIOS-free HLE boot needs to leave {@code SR}
+     * as if the real BIOS had already run, not at raw hardware reset defaults, the same reasoning
+     * already applied to {@code pr}/{@code r[15]}.
+     */
+    public void setSr(int value) {
+        sr = value;
+    }
+
+    /**
      * Tries to deliver a real hardware interrupt — the actual SH-4 exception-entry sequence,
      * not a shortcut: real hardware's documented interrupt-acceptance rule is checked first
      * ({@code BL} must be clear, and {@code priorityLevel} must exceed {@code IMASK} — see

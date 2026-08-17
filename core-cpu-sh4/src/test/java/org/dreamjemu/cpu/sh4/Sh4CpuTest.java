@@ -1,5 +1,6 @@
 package org.dreamjemu.cpu.sh4;
 
+import org.dreamjemu.system.HleBootLoader;
 import org.junit.jupiter.api.Test;
 
 import static org.dreamjemu.cpu.sh4.Sh4Asm.addImm;
@@ -823,6 +824,39 @@ class Sh4CpuTest {
         assertFalse(deliveredAtEqualLevel, "a priority level equal to IMASK must still be masked");
         assertFalse(deliveredAtLowerLevel, "a priority level below IMASK must be masked");
         assertTrue(deliveredAtHigherLevel, "a priority level above IMASK must be accepted");
+    }
+
+    @Test
+    void setSrOverwritesTheWholeRegisterMatchingLdcRnSr() {
+        // setSr is the same real hardware-level operation LDC Rn,SR performs, exposed publicly
+        // for boot-loading callers (see setSr's own Javadoc) -- confirms it actually behaves like
+        // a real SR write, not some partial/filtered assignment: T/BL/IMASK all take on exactly
+        // the value set.
+        Sh4Cpu cpu = new Sh4Cpu(new SimpleTestBus(MEM_SIZE), 0);
+
+        cpu.setSr(HleBootLoader.INITIAL_SR);
+
+        assertFalse(cpu.tFlag());
+        assertFalse(cpu.blFlag(), "HleBootLoader.INITIAL_SR clears BL");
+        assertEquals(0, cpu.imaskLevel(), "HleBootLoader.INITIAL_SR fully unmasks IMASK");
+    }
+
+    @Test
+    void setSrThenTryDeliverInterruptWorksEndToEndWithTheRealHleBootValue() {
+        // The actual real-world fix this project's HLE boot needed, exercised end to end: with
+        // Sh4Cpu's own real hardware reset value (BL=1, IMASK=1111), no interrupt could ever be
+        // delivered (see interruptsAreFullyBlockedAtResetMatchingRealHardware above) -- with
+        // HleBootLoader.INITIAL_SR applied instead (what this project's HLE boot now does before
+        // starting real game code), the exact same request succeeds.
+        Sh4Cpu cpu = new Sh4Cpu(new SimpleTestBus(MEM_SIZE), 0x1000);
+        cpu.vbr = 0x8C000000;
+
+        boolean deliveredAtReset = cpu.tryDeliverInterrupt(9, 0x320);
+        cpu.setSr(HleBootLoader.INITIAL_SR);
+        boolean deliveredAfterHleBootFix = cpu.tryDeliverInterrupt(9, 0x320);
+
+        assertFalse(deliveredAtReset, "at Sh4Cpu's own real reset value, nothing should get through");
+        assertTrue(deliveredAfterHleBootFix, "after HleBootLoader.INITIAL_SR, a normal-group interrupt must get through");
     }
 
     @Test

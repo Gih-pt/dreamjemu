@@ -85,4 +85,29 @@ class HleBootLoaderTest {
                         + "not overlap it -- a stack that immediately corrupts the code it's supposed "
                         + "to be the stack FOR would be exactly the kind of bug this constant exists to fix");
     }
+
+    @Test
+    void initialSrUnblocksInterruptsAndFullyUnmasksThem() {
+        // Confirms the two bits this constant exists to fix, per its own Javadoc: BL=0
+        // (interrupts not blocked) and IMASK=0000 (nothing masked) -- unlike Sh4Cpu's own real
+        // hardware reset value (0x700000F0), which leaves BL=1/IMASK=1111, the state a real BIOS
+        // -- not modeled by this BIOS-free HLE boot -- would already have moved past by the time
+        // a real game starts running.
+        int sr = HleBootLoader.INITIAL_SR;
+
+        assertEquals(0, sr & (1 << 28), "BL (bit 28) must be clear -- interrupts not blocked");
+        assertEquals(0, (sr >>> 4) & 0xF, "IMASK (bits 7-4) must be 0 -- nothing masked");
+    }
+
+    @Test
+    void initialSrPreservesModeAndBankBitsFromTheRealResetValue() {
+        // MD (bit 30) and RB (bit 29) are kept set, matching Sh4Cpu's own real hardware reset
+        // value -- see HleBootLoader.INITIAL_SR's own Javadoc for why: the most plausible state a
+        // real BIOS would still leave the CPU in, and this project has no separate banked-
+        // register/privilege-mode behavior that depends on these bits either way.
+        int sr = HleBootLoader.INITIAL_SR;
+
+        assertEquals(1 << 30, sr & (1 << 30), "MD (bit 30) must still be set");
+        assertEquals(1 << 29, sr & (1 << 29), "RB (bit 29) must still be set");
+    }
 }

@@ -135,6 +135,54 @@ public final class HleBootLoader {
             (int) (0x8000_0000L + DreamcastAddressMap.MAIN_RAM_BASE + DreamcastAddressMap.MAIN_RAM_SIZE);
 
     /**
+     * The Status Register value {@code Sh4Cpu.sr} (privately held; set via {@code STC SR,Rn} /
+     * restored via {@code LDC Rn,SR}) should be initialized to before starting execution at
+     * {@link #BOOT_FILE_ENTRY_ADDRESS} — <b>not</b> {@code Sh4Cpu}'s own real-hardware reset
+     * value ({@code 0x700000F0}, {@code BL=1}, {@code IMASK=1111} — see {@code Sh4Cpu.sr}'s own
+     * Javadoc), the same "this BIOS-free HLE boot needs to leave state as if the real BIOS had
+     * already run, not at raw hardware reset defaults" reasoning as {@link #BOOT_RETURN_SENTINEL}
+     * and {@link #INITIAL_STACK_POINTER} above — just for {@code SR.IMASK} instead of {@code PR}/
+     * {@code r[15]}.
+     *
+     * <p><b>Why this exists:</b> found necessary by a real Sonic Adventure run (2026-08-14) that
+     * reached a genuine SH-4 idle-wait pattern (real opcode: {@code BRA -2} with a {@code NOP}
+     * delay slot — confirmed via a dedicated diagnostic to be exactly that pattern, not a hidden
+     * condition) at {@code PC=0x8C6696A8}, which ran out a 100,000,000-step budget without ever
+     * leaving it even after {@code Sh4Cpu.tryDeliverInterrupt} (this project's real interrupt
+     * delivery — see its own Javadoc) was implemented and confirmed working mechanically. A
+     * further diagnostic (logging every real {@code LDC Rn,SR} write at {@code INFO} level — see
+     * that opcode's own comment) showed the actual reason directly: across all 16 real
+     * {@code LDC Rn,SR} writes the real Sonic Adventure dump executes between boot and this idle
+     * loop, {@code SR.IMASK} is <b>never once</b> changed away from {@code 15} (every priority
+     * level masked) — only {@code SR.BL} and {@code SR.T} ever change. Since {@code LDC Rn,SR} is
+     * the only real SH-4 instruction that can write {@code SR} at all, and a released, working
+     * commercial game unquestionably does receive real VBlank interrupts on actual hardware, this
+     * is strong direct evidence that Sonic Adventure's own code was never written to lower
+     * {@code IMASK} itself — it was written assuming the real BIOS already left {@code IMASK} low
+     * enough by the time {@code 1ST_READ.BIN} starts running, the same category of assumption
+     * already found (and fixed) for {@code PR}/{@code r[15]} above.
+     *
+     * <p>Chosen as {@code 0x60000000} — {@code MD=1}/{@code RB=1} preserved from the real reset
+     * value (privileged mode / register bank 1, still the most plausible state a real BIOS would
+     * leave the CPU in — this project has no separate banked-register or privilege-mode behavior
+     * that depends on these bits either way), {@code BL=0} (unblocked, matching every observed
+     * real {@code LDC Rn,SR} write's own eventual {@code BL=0} state — the real code's own
+     * critical-section pattern only makes sense if it can expect interrupts through when it
+     * itself sets {@code BL=0}), and {@code IMASK=0000} (fully unmasked — the simplest value
+     * consistent with "the BIOS already finished its own interrupt-priority setup" and with real
+     * code never touching {@code IMASK} itself in the entire observed trace). {@code T=0}
+     * (unaffected either way — real code sets it explicitly via comparison instructions before
+     * ever relying on it). <b>This is inferred from strong, direct real-execution evidence (16
+     * real {@code SR} writes, zero of which touch {@code IMASK}), not copied from a single
+     * pinpoint-cited real BIOS memory dump</b> — no publicly available authoritative source
+     * documenting the Dreamcast boot ROM's exact {@code SR} value at the {@code 1ST_READ.BIN}
+     * handoff was found despite searching, unlike {@link #BOOT_FILE_ENTRY_ADDRESS}'s or
+     * {@link #INITIAL_STACK_POINTER}'s citations — if a more authoritative source is ever found,
+     * this value should be revisited against it.
+     */
+    public static final int INITIAL_SR = 0x6000_0000;
+
+    /**
      * Writes {@code bootFileBytes} into {@code bus} starting at {@link
      * #BOOT_FILE_ENTRY_ADDRESS}, one byte at a time (making no assumption
      * about how the target {@link Bus} implementation stores its backing
