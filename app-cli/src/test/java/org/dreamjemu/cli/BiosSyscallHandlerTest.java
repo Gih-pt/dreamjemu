@@ -134,18 +134,181 @@ class BiosSyscallHandlerTest {
     }
 
     @Test
-    void flashromAlwaysReportsFailureForEveryDocumentedFunction() {
-        for (int fn = 0; fn <= 3; fn++) {
-            MemBus bus = new MemBus();
-            BiosSyscallHandler.installVectorTable(bus);
-            BiosSyscallHandler handler = new BiosSyscallHandler(bus);
-            Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
-            cpu.r[7] = fn;
+    void flashromInfoReturnsRealPartitionOffsetsAndSizes() {
+        // Confirmed against mc.pp.se/dc/syscalls.html's own worked partition table.
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+        Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu.r[7] = 0; // FLASHROM_INFO
+        cpu.r[4] = 0; // partition 0 (factory settings)
+        cpu.r[5] = 0x8C000200; // output: two int32s (offset, size)
 
-            handler.handle(cpu);
+        handler.handle(cpu);
 
-            assertEquals(-1, cpu.r[0], "FLASHROM function " + fn + " should honestly report failure (no flashrom emulation)");
-        }
+        assertEquals(0, cpu.r[0]);
+        assertEquals(0x1A000, bus.read32(0x8C000200));
+        assertEquals(0x2000, bus.read32(0x8C000204));
+    }
+
+    @Test
+    void flashromInfoFailsForAnInvalidPartition() {
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+        Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu.r[7] = 0; // FLASHROM_INFO
+        cpu.r[4] = 5; // only 0-4 are real partitions
+
+        handler.handle(cpu);
+
+        assertEquals(-1, cpu.r[0]);
+    }
+
+    @Test
+    void flashromReadReturnsHonestlyBlankErasedBytesAndReportsSuccess() {
+        // This project has no real dumped flash.bin, so the only honest content it can offer is
+        // real NOR flash's own documented erased-cell value (0xFF) — see BiosSyscallHandler's
+        // own flashRom Javadoc.
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+        Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu.r[7] = 1; // FLASHROM_READ
+        cpu.r[4] = 0x1A000; // partition 0's own start offset
+        cpu.r[5] = 0x8C000300; // dest
+        cpu.r[6] = 4; // count
+
+        handler.handle(cpu);
+
+        assertEquals(4, cpu.r[0], "must report the real byte count read");
+        assertEquals((byte) 0xFF, bus.read8(0x8C000300));
+        assertEquals((byte) 0xFF, bus.read8(0x8C000303));
+    }
+
+    @Test
+    void flashromReadFailsForAnOutOfRangeRequest() {
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+        Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu.r[7] = 1; // FLASHROM_READ
+        cpu.r[4] = 0x1FFFC;
+        cpu.r[5] = 0x8C000300;
+        cpu.r[6] = 100; // would run past the real 128KB chip's end
+
+        handler.handle(cpu);
+
+        assertEquals(-1, cpu.r[0]);
+    }
+
+    @Test
+    void flashromWriteOnlyEverClearsBitsMatchingRealNorFlash() {
+        // Real NOR flash without a prior erase can only ever clear bits (1 -> 0), never set them
+        // — confirmed against mc.pp.se and redream's own flash.c.
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+
+        Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu.r[7] = 2; // FLASHROM_WRITE
+        cpu.r[4] = 0x1A000;
+        cpu.r[5] = 0x8C000400;
+        bus.write8(0x8C000400, (byte) 0x0F);
+        cpu.r[6] = 1;
+        handler.handle(cpu);
+        assertEquals(1, cpu.r[0]);
+
+        // Read it back: 0xFF (erased) & 0x0F (written) = 0x0F.
+        Sh4Cpu cpu2 = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu2.r[7] = 1; // FLASHROM_READ
+        cpu2.r[4] = 0x1A000;
+        cpu2.r[5] = 0x8C000500;
+        cpu2.r[6] = 1;
+        handler.handle(cpu2);
+        assertEquals((byte) 0x0F, bus.read8(0x8C000500), "0xFF & 0x0F must leave only the cleared bits");
+    }
+
+    @Test
+    void flashromWriteFailsForAnOutOfRangeRequest() {
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+        Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu.r[7] = 2; // FLASHROM_WRITE
+        cpu.r[4] = -5; // negative offset, never valid
+        cpu.r[5] = 0x8C000400;
+        cpu.r[6] = 1;
+
+        handler.handle(cpu);
+
+        assertEquals(-1, cpu.r[0]);
+    }
+
+    @Test
+    void flashromDeleteErasesTheWholePartitionBackToBlank() {
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+
+        // First clear a bit via a real write, confirming it's genuinely 0 beforehand.
+        Sh4Cpu writeCpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        writeCpu.r[7] = 2;
+        writeCpu.r[4] = 0x1A000;
+        writeCpu.r[5] = 0x8C000400;
+        bus.write8(0x8C000400, (byte) 0x00);
+        writeCpu.r[6] = 1;
+        handler.handle(writeCpu);
+
+        Sh4Cpu deleteCpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        deleteCpu.r[7] = 3; // FLASHROM_DELETE
+        deleteCpu.r[4] = 0x1A000; // partition 0's own start offset
+
+        handler.handle(deleteCpu);
+
+        assertEquals(0, deleteCpu.r[0]);
+
+        Sh4Cpu readCpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        readCpu.r[7] = 1;
+        readCpu.r[4] = 0x1A000;
+        readCpu.r[5] = 0x8C000500;
+        readCpu.r[6] = 1;
+        handler.handle(readCpu);
+        assertEquals((byte) 0xFF, bus.read8(0x8C000500), "the deleted partition must read back as erased (0xFF)");
+    }
+
+    @Test
+    void flashromDeleteFailsWhenTheOffsetIsNotAPartitionsOwnStart() {
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+        Sh4Cpu cpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_FLASHROM));
+        cpu.r[7] = 3; // FLASHROM_DELETE
+        cpu.r[4] = 0x1A001; // one byte into partition 0, not its start
+
+        handler.handle(cpu);
+
+        assertEquals(-1, cpu.r[0]);
+    }
+
+    @Test
+    void sysinfoIdReturnsARealNonNullPointerAfterInit() {
+        // Real hardware documents no failure return value for SYSINFO_ID at all — confirms this
+        // no longer returns the null pointer it used to.
+        MemBus bus = new MemBus();
+        BiosSyscallHandler.installVectorTable(bus);
+        BiosSyscallHandler handler = new BiosSyscallHandler(bus);
+
+        Sh4Cpu initCpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_SYSINFO));
+        initCpu.r[7] = 0; // SYSINFO_INIT
+        handler.handle(initCpu);
+
+        Sh4Cpu idCpu = cpuAt(bus, bus.read32(BiosSyscallHandler.VECTOR_SYSINFO));
+        idCpu.r[7] = 3; // SYSINFO_ID
+        handler.handle(idCpu);
+
+        assertEquals(0x8C000068, idCpu.r[0], "must return the real, documented, fixed SYSINFO data address");
+        assertEquals((byte) 0xFF, bus.read8(idCpu.r[0]), "the pointed-to data must be real (if honestly blank) flashrom bytes, not garbage");
     }
 
     @Test

@@ -114,6 +114,30 @@ public final class BiosSyscallHandler {
     private static final int GDC_ERROR_SYSTEM = 0x1;
     private static final int GDC_ERROR_INVALID_CMD = 0x5;
 
+    // FLASHROM_* partition table — confirmed against mc.pp.se/dc/syscalls.html's own worked
+    // example table (the real, physical 128KB flashrom chip's 5 fixed partitions). Index is the
+    // partition number FLASHROM_INFO's r4 selects; FLASHROM_PARTITION_OFFSETS/SIZES give each
+    // partition's absolute offset/size within the chip.
+    private static final int[] FLASHROM_PARTITION_OFFSETS = {0x1A000, 0x18000, 0x1C000, 0x10000, 0x00000};
+    private static final int[] FLASHROM_PARTITION_SIZES = {0x2000, 0x2000, 0x4000, 0x8000, 0x10000};
+    private static final int FLASHROM_SIZE = 0x20000; // 128KB total — confirmed by the same table.
+
+    /**
+     * A real, in-memory-backed emulation of the physical 128KB flashrom chip — not a
+     * per-call fabrication. Initialized to {@code 0xFF} throughout (see the constructor):
+     * real NOR flash's documented erased-cell value (confirmed against both mc.pp.se's own
+     * description of the erase operation and redream's independent {@code flash.c}, whose
+     * {@code flash_erase} explicitly fills with {@code 0xff}) — matching a factory-fresh,
+     * never-configured console exactly, which is the only honest state this project can claim
+     * without a real dumped {@code flash.bin} (this project has none, and fabricating specific
+     * "realistic" region/language bytes without a confirmed source would be exactly the kind of
+     * unlabeled guess this project's discipline avoids). {@link #handleFlashrom} reads/writes
+     * real bytes here — {@code FLASHROM_WRITE} only ever clears bits ({@code &=}, never sets),
+     * the real physical constraint of NOR flash without a prior erase, also confirmed against
+     * both of those same sources.
+     */
+    private final byte[] flashRom = new byte[FLASHROM_SIZE];
+
     /**
      * This project's own single-slot model of the real GDROM command queue: SEND_COMMAND
      * determines a command's final outcome immediately (synchronously — this interpreter has no
@@ -129,18 +153,32 @@ public final class BiosSyscallHandler {
     private int slotStatus = GDC_STATUS_INACTIVE;
     private int slotError = GDC_ERROR_OK;
 
+    /**
+     * The fixed RAM address {@code SYSINFO_INIT} copies flashrom data to, and {@code
+     * SYSINFO_ID}/{@code SYSINFO_ICON} read back from — confirmed against mc.pp.se/dc/
+     * syscalls.html, which documents the copied range as {@code 8C000068}-{@code 8C00007F}
+     * (24 bytes) and separately documents {@code SYSINFO_ID} as returning "a pointer to where
+     * the ID is stored as 8 contiguous bytes", which every independent real-world reference
+     * (KallistiOS, redream) places at the very start of that same copied range.
+     */
+    private static final int SYSINFO_DATA_ADDRESS = 0x8C000068;
+    private static final int SYSINFO_DATA_LENGTH = 0x18; // 24 bytes — 8C000068 through 8C00007F inclusive.
+
     private final Bus bus;
 
     /**
      * @param bus the same {@link Bus} the emulated machine's {@code Sh4Cpu} runs against — needed
      *            to write {@code GDROM_CHECK_COMMAND}'s 4-int extended-status block back into
      *            guest RAM at the address the guest itself provided (see {@link
-     *            #handleGdrom}); {@code Sh4Cpu} deliberately keeps its own {@code Bus} reference
-     *            private (see its Javadoc), so this is passed in separately, the same way {@link
-     *            #installVectorTable} already takes a {@code Bus} rather than a {@code Sh4Cpu}.
+     *            #handleGdrom}), and similarly for {@link #handleFlashrom}/{@link
+     *            #handleSysinfo}'s own real memory movement; {@code Sh4Cpu} deliberately keeps
+     *            its own {@code Bus} reference private (see its Javadoc), so this is passed in
+     *            separately, the same way {@link #installVectorTable} already takes a
+     *            {@code Bus} rather than a {@code Sh4Cpu}.
      */
     public BiosSyscallHandler(Bus bus) {
         this.bus = bus;
+        java.util.Arrays.fill(flashRom, (byte) 0xFF);
     }
 
     /**
@@ -188,24 +226,38 @@ public final class BiosSyscallHandler {
     }
 
 
-    private static void handleSysinfo(Sh4Cpu cpu) {
+    private void handleSysinfo(Sh4Cpu cpu) {
         int fn = cpu.r[7];
         switch (fn) {
-            case 0: // SYSINFO_INIT — real behavior: copies flashrom data to a fixed RAM address.
-                     // We have no flashrom, but every real caller must call this before the other
-                     // two anyway; reporting success (matching the documented return value) lets
-                     // callers proceed to SYSINFO_ICON/SYSINFO_ID, which report their own honest
-                     // failure below.
+            case 0: // SYSINFO_INIT — real behavior: copies flashrom data to a fixed RAM address
+                     // (see SYSINFO_DATA_ADDRESS's own Javadoc for the confirmed source/target).
+                     // Copies real bytes from this project's own emulated flashrom (see
+                     // flashRom's own Javadoc for why those bytes are honestly all 0xFF, not
+                     // fabricated "realistic" values) — a factory-fresh console's real state,
+                     // not a fabrication of what SYSINFO_ID/SYSINFO_ICON would then report.
                 LOG.info("SYSINFO_INIT");
+                for (int i = 0; i < SYSINFO_DATA_LENGTH; i++) {
+                    bus.write8(Integer.toUnsignedLong(SYSINFO_DATA_ADDRESS + i),
+                            flashRom[FLASHROM_PARTITION_OFFSETS[0] + i]);
+                }
                 cpu.r[0] = 0;
                 break;
             case 2: // SYSINFO_ICON
-                LOG.warn("SYSINFO_ICON: not supported (no flashrom icon data) - returning failure");
+                LOG.warn("SYSINFO_ICON: not supported - the real icon data format is genuinely "
+                        + "undocumented (mc.pp.se's own page: \"The format those icons are in is "
+                        + "not known\") - returning failure rather than fabricating a format "
+                        + "nobody has confirmed");
                 cpu.r[0] = -1;
                 break;
-            case 3: // SYSINFO_ID
-                LOG.warn("SYSINFO_ID: not supported (no real hardware ID) - returning null pointer");
-                cpu.r[0] = 0;
+            case 3: // SYSINFO_ID — real hardware documents no failure return value at all; always
+                     // returns a pointer to the 8 bytes SYSINFO_INIT copied above (see
+                     // SYSINFO_DATA_ADDRESS's own Javadoc). Returning a real, stable, non-null
+                     // pointer (even to this project's honestly-blank flashrom data) matches real
+                     // behavior far more closely than the null pointer this used to return, which
+                     // a real caller — since real hardware never needs to check for one — might
+                     // never even guard against.
+                LOG.info("SYSINFO_ID");
+                cpu.r[0] = SYSINFO_DATA_ADDRESS;
                 break;
             default:
                 LOG.warn("SYSINFO: unknown function r7=%d - returning failure", fn);
@@ -234,19 +286,87 @@ public final class BiosSyscallHandler {
         }
     }
 
-    private static final String[] FLASHROM_FUNCTION_NAMES = {
-            "FLASHROM_INFO", "FLASHROM_READ", "FLASHROM_WRITE", "FLASHROM_DELETE"
-    };
-
-    private static void handleFlashrom(Sh4Cpu cpu) {
+    private void handleFlashrom(Sh4Cpu cpu) {
         int fn = cpu.r[7];
-        String name = (fn >= 0 && fn < FLASHROM_FUNCTION_NAMES.length) ? FLASHROM_FUNCTION_NAMES[fn] : null;
-        if (name != null) {
-            LOG.warn("%s: not supported (no flashrom emulation) - returning failure", name);
-        } else {
-            LOG.warn("FLASHROM: unknown function r7=%d - returning failure", fn);
+        switch (fn) {
+            case 0: { // FLASHROM_INFO — r4=partition, r5=ptr to two int32s (offset, size).
+                int partition = cpu.r[4];
+                if (partition < 0 || partition >= FLASHROM_PARTITION_OFFSETS.length) {
+                    LOG.warn("FLASHROM_INFO: no such partition %d - returning failure", partition);
+                    cpu.r[0] = -1;
+                    break;
+                }
+                long ptr = Integer.toUnsignedLong(cpu.r[5]);
+                bus.write32(ptr, FLASHROM_PARTITION_OFFSETS[partition]);
+                bus.write32(ptr + 4, FLASHROM_PARTITION_SIZES[partition]);
+                LOG.info("FLASHROM_INFO: partition %d -> offset 0x%X, size 0x%X",
+                        partition, FLASHROM_PARTITION_OFFSETS[partition], FLASHROM_PARTITION_SIZES[partition]);
+                cpu.r[0] = 0;
+                break;
+            }
+            case 1: { // FLASHROM_READ — r4=absolute offset, r5=dest ptr, r6=count.
+                int offset = cpu.r[4];
+                int count = cpu.r[6];
+                if (offset < 0 || count < 0 || (long) offset + count > FLASHROM_SIZE) {
+                    LOG.warn("FLASHROM_READ: out-of-range offset=0x%X count=%d - returning failure",
+                            offset, count);
+                    cpu.r[0] = -1;
+                    break;
+                }
+                long destPtr = Integer.toUnsignedLong(cpu.r[5]);
+                for (int i = 0; i < count; i++) {
+                    bus.write8(destPtr + i, flashRom[offset + i]);
+                }
+                LOG.info("FLASHROM_READ: offset=0x%X count=%d", offset, count);
+                cpu.r[0] = count;
+                break;
+            }
+            case 2: { // FLASHROM_WRITE — r4=absolute offset, r5=src ptr, r6=count. Real NOR flash
+                       // can only clear bits without a prior erase (confirmed against mc.pp.se and
+                       // redream's own flash.c — see flashRom's own Javadoc) — modeled here with a
+                       // real bitwise AND, not a plain overwrite.
+                int offset = cpu.r[4];
+                int count = cpu.r[6];
+                if (offset < 0 || count < 0 || (long) offset + count > FLASHROM_SIZE) {
+                    LOG.warn("FLASHROM_WRITE: out-of-range offset=0x%X count=%d - returning failure",
+                            offset, count);
+                    cpu.r[0] = -1;
+                    break;
+                }
+                long srcPtr = Integer.toUnsignedLong(cpu.r[5]);
+                for (int i = 0; i < count; i++) {
+                    flashRom[offset + i] &= bus.read8(srcPtr + i);
+                }
+                LOG.info("FLASHROM_WRITE: offset=0x%X count=%d", offset, count);
+                cpu.r[0] = count;
+                break;
+            }
+            case 3: { // FLASHROM_DELETE — r4=the offset of a partition's own start (not a
+                       // partition number). Real behavior erases that whole partition back to
+                       // 0xFF (confirmed against mc.pp.se).
+                int offset = cpu.r[4];
+                int partition = -1;
+                for (int i = 0; i < FLASHROM_PARTITION_OFFSETS.length; i++) {
+                    if (FLASHROM_PARTITION_OFFSETS[i] == offset) {
+                        partition = i;
+                        break;
+                    }
+                }
+                if (partition < 0) {
+                    LOG.warn("FLASHROM_DELETE: 0x%X isn't the start of any known partition - "
+                            + "returning failure", offset);
+                    cpu.r[0] = -1;
+                    break;
+                }
+                java.util.Arrays.fill(flashRom, offset, offset + FLASHROM_PARTITION_SIZES[partition], (byte) 0xFF);
+                LOG.info("FLASHROM_DELETE: partition %d (offset 0x%X)", partition, offset);
+                cpu.r[0] = 0;
+                break;
+            }
+            default:
+                LOG.warn("FLASHROM: unknown function r7=%d - returning failure", fn);
+                cpu.r[0] = -1;
         }
-        cpu.r[0] = -1;
     }
 
     private void handleMiscGdrom(Sh4Cpu cpu) {
