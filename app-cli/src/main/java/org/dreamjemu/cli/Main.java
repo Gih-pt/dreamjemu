@@ -660,6 +660,35 @@ public final class Main {
                 "  Interrupt state: SR.T=%s SR.BL=%s SR.IMASK=%d  Holly normal-interrupt pending=%s",
                 cpu.tFlag(), cpu.blFlag(), cpu.imaskLevel(), hollySystemRegisters.hasPendingNormalInterrupt()));
 
+        // Added 2026-08-19 after two real, evidence-based hypotheses for the BRA -2 idle loop
+        // (SPG_STATUS/SB_ISTNRM's real timing fix, then HleBootLoader.INITIAL_SR, then a
+        // FLASHROM_READ-failure-causes-a-different-code-path theory) were each tested against a
+        // real Sonic Adventure run and ruled out in turn — the loop reappears at the exact same
+        // PC, same step count, regardless. Continuing to guess at *why* code reaches this PC
+        // isn't productive; the next real diagnostic is *how* it gets there — what code
+        // immediately precedes entering the loop, which register-snapshot diagnostics can't show
+        // (those only capture state once the loop is already confirmed stable). Since
+        // LoopDetector requires 1000 consecutive repeats before confirming a loop, and
+        // ringCapacity (4096) comfortably exceeds that for any period this small, the lead-up
+        // instructions are typically still sitting in the ring buffer, just past where the loop
+        // body itself starts — this prints them.
+        long loopStartIndex = (long) ringPushes - (long) period * loopDetector.consecutiveRepeats();
+        long leadUpAvailable = Math.min(60, Math.max(0, loopStartIndex));
+        if (leadUpAvailable > 0) {
+            System.out.println("  Instructions leading up to this loop (most recent last):");
+            for (long i = leadUpAvailable; i >= 1; i--) {
+                int index = (int) (((loopStartIndex - i) % ringCapacity + ringCapacity) % ringCapacity);
+                int leadPc = pcRing[index];
+                int leadOpcode = opcodeRing[index];
+                System.out.println(String.format("    PC=0x%08X opcode=0x%04X", leadPc, leadOpcode));
+                if (isDelayedBranchOpcode(leadOpcode)) {
+                    int slotOpcode = bus.read16(Integer.toUnsignedLong(leadPc + 2)) & 0xFFFF;
+                    System.out.println(String.format("      (delay slot) PC=0x%08X opcode=0x%04X",
+                            leadPc + 2, slotOpcode));
+                }
+            }
+        }
+
         System.out.println("This may be legitimate but slow work (e.g. a byte-at-a-time memset/.bss-clear");
         System.out.println("loop — see docs/STATUS.md) or a genuine spin-wait on hardware state this");
         System.out.println("interpreter doesn't model yet (VBlank, DMA, timers — none exist so far).");
